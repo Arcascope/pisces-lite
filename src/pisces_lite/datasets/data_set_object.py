@@ -141,6 +141,7 @@ class DataSetObject:
                 skiprows=max((n_rows or 1) - 1, 0),
                 sep=sep,
             )
+            df = df.dropna()
         except Exception as exc:
             warnings.warn(f"Error reading {file}:\n{exc}")
             return None
