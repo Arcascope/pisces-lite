@@ -74,6 +74,8 @@ class MetricsLogger:
             "dataset": dataset,
             "training_dataset": training_dataset,
         }
+        if self._has_identity(csv_path, identity):
+            return []
 
         full_extra: Dict[str, Any] = dict(extra or {})
         full_extra.setdefault("run_dir", csv_path.parent)
@@ -146,3 +148,24 @@ class MetricsLogger:
                 writer.writeheader()
             for row in rows:
                 writer.writerow(row)
+
+    def _has_identity(self, csv_path: Path, identity: Dict[str, Any]) -> bool:
+        if not csv_path.exists() or csv_path.stat().st_size == 0:
+            return False
+
+        with open(csv_path, newline="") as f:
+            reader = csv.DictReader(f)
+            if not reader.fieldnames:
+                return False
+            id_cols = [col for col in IDENTITY_COLUMNS if col in reader.fieldnames]
+            if not id_cols:
+                return False
+            target = {col: self._csv_identity_value(identity.get(col)) for col in id_cols}
+            for row in reader:
+                if all(row.get(col, "") == target[col] for col in id_cols):
+                    return True
+        return False
+
+    @staticmethod
+    def _csv_identity_value(value: Any) -> str:
+        return "" if value is None else str(value)
