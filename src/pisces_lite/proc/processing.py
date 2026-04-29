@@ -43,14 +43,14 @@ class ComputeJerkNUFFT(ProcessingStep):
         return "jerk_nufft"
 
     def transform(self, X: np.ndarray) -> "senpy.JerkData":
-        timestamps = X[..., 0]
+        timestamps = np.ascontiguousarray(X[..., 0])
         median_dt = float(np.median(np.diff(timestamps)))
         ts_unit = "ms" if median_dt > 10 else "s"
         return senpy.compute_jerk(
             timestamps,
-            X[..., 1],
-            X[..., 2],
-            X[..., 3],
+            np.ascontiguousarray(X[..., 1]),
+            np.ascontiguousarray(X[..., 2]),
+            np.ascontiguousarray(X[..., 3]),
             ts_unit=ts_unit,
             use_diff=self.use_diff,
         )
