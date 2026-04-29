@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1
+#
+# CPU-only pisces-lite image. Mirrors the GPU Dockerfile in this directory but
+# strips the NVIDIA JAX base in favor of slim Python; framework consumers that
+# don't need CUDA (e.g. inference servers running on a small EC2) layer on top.
+#
+# Contents:
+#   - python:3.12-slim base
+#   - git + cmake + build-essential (required to build senpy from GitHub)
+#   - pisces-lite itself, which pulls numpy/scipy/sklearn/pandas/matplotlib/
+#     seaborn/tqdm and senpy as dependencies
+#
+# Explicitly NOT installed here:
+#   - JAX, flax, optax, TensorFlow, Keras. Consumers add their own.
+#
+# Build:
+#   docker build -f Dockerfile.cpu -t pisces-lite-cpu:latest .
+#   docker build -f Dockerfile.cpu -t pisces-lite-cpu:v0.0.1 .
+
+FROM python:3.12-slim
+
+ARG USERNAME=ubuntu
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+
+RUN if ! getent group ${USERNAME} > /dev/null; then \
+      groupadd -g ${GROUP_ID} ${USERNAME}; \
+    fi && \
+    if ! getent passwd ${USERNAME} > /dev/null; then \
+      useradd -u ${USER_ID} -g ${GROUP_ID} -m -s /bin/bash ${USERNAME}; \
+    fi
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git cmake build-essential ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /pisces-lite
+COPY pyproject.toml ./
+COPY src/ src/
+RUN pip install --no-cache-dir .
+
+USER ${USERNAME}
+WORKDIR /home/${USERNAME}/workspace
+
+CMD ["/bin/bash"]
