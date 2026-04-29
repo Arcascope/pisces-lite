@@ -58,6 +58,16 @@ PSG_MAPPING_NO_N4 = {
     4: 5,
 }
 
+PSG_MAPPING_5C = {
+    PSG_MASK: PSG_MASK,
+    0: 0,
+    1: 1,
+    2: 2,
+    3: 3,
+    4: 3,
+    5: 5
+}
+
 PSG_MAPPING_WLDR = {
     PSG_MASK: PSG_MASK,
     0: 0,
