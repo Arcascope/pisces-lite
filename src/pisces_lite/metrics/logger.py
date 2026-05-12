@@ -82,6 +82,7 @@ class MetricsLogger:
         full_extra.setdefault("psg_dt_minutes", self.config.psg_dt_minutes)
         full_extra.setdefault("min_stage_minutes", self.config.min_stage_minutes)
         full_extra.setdefault("wake_class", self.config.wake_class)
+        full_extra.setdefault("class_names", self.config.resolved_class_names())
 
         y_true_arr = np.asarray(y_true)
         mask = y_true_arr >= 0

@@ -14,6 +14,7 @@ from pisces_lite.metrics.specs.base import (
     min_stage_minutes,
     psg_dt,
     register_metric,
+    sleep_mask,
     waso_minutes,
 )
 
@@ -32,36 +33,36 @@ def _cohen_kappa(ctx: EvalContext) -> float:
 
 @register_metric("f1_sleep_wake")
 def _f1_sleep_wake(ctx: EvalContext) -> float:
-    y_true_bin = (ctx.y_true > 0).astype(int)
-    y_pred_bin = (hard_preds(ctx) > 0).astype(int)
+    y_true_bin = sleep_mask(ctx.y_true, ctx).astype(int)
+    y_pred_bin = sleep_mask(hard_preds(ctx), ctx).astype(int)
     return float(f1_score(y_true_bin, y_pred_bin, zero_division=0))
 
 
 @register_metric("true_tst_minutes")
 def _true_tst_minutes(ctx: EvalContext) -> float:
-    return float(np.sum(ctx.y_true > 0)) * psg_dt(ctx)
+    return float(np.sum(sleep_mask(ctx.y_true, ctx))) * psg_dt(ctx)
 
 
 @register_metric("pred_tst_minutes")
 def _pred_tst_minutes(ctx: EvalContext) -> float:
-    return float(np.sum(hard_preds(ctx) > 0)) * psg_dt(ctx)
+    return float(np.sum(sleep_mask(hard_preds(ctx), ctx))) * psg_dt(ctx)
 
 
 @register_metric("true_waso_minutes")
 def _true_waso_minutes(ctx: EvalContext) -> float:
-    return waso_minutes(ctx.y_true, psg_dt(ctx))
+    return waso_minutes(ctx.y_true, psg_dt(ctx), ctx)
 
 
 @register_metric("pred_waso_minutes")
 def _pred_waso_minutes(ctx: EvalContext) -> float:
-    return waso_minutes(hard_preds(ctx), psg_dt(ctx))
+    return waso_minutes(hard_preds(ctx), psg_dt(ctx), ctx)
 
 
 @register_metric("tst_mape")
 def _tst_mape(ctx: EvalContext) -> float:
     dt = psg_dt(ctx)
-    true_sleep = float(np.sum(ctx.y_true > 0)) * dt
-    pred_sleep = float(np.sum(hard_preds(ctx) > 0)) * dt
+    true_sleep = float(np.sum(sleep_mask(ctx.y_true, ctx))) * dt
+    pred_sleep = float(np.sum(sleep_mask(hard_preds(ctx), ctx))) * dt
     if true_sleep < min_stage_minutes(ctx):
         return float("nan")
     return abs(pred_sleep - true_sleep) / max(true_sleep, 1e-6) * 100
@@ -70,8 +71,8 @@ def _tst_mape(ctx: EvalContext) -> float:
 @register_metric("waso_mape")
 def _waso_mape(ctx: EvalContext) -> float:
     dt = psg_dt(ctx)
-    true_w = waso_minutes(ctx.y_true, dt)
-    pred_w = waso_minutes(hard_preds(ctx), dt)
+    true_w = waso_minutes(ctx.y_true, dt, ctx)
+    pred_w = waso_minutes(hard_preds(ctx), dt, ctx)
     if true_w < min_stage_minutes(ctx):
         return float("nan")
     return abs(pred_w - true_w) / max(true_w, 1e-6) * 100
@@ -135,12 +136,12 @@ def make_oura_gap(class_names: List[str]) -> MetricFn:
             return abs(pred_min - true_min) / max(true_min, 1e-6)
 
         y_pred = hard_preds(ctx)
-        true_sleep = float(np.sum(ctx.y_true > 0)) * dt
-        pred_sleep = float(np.sum(y_pred > 0)) * dt
+        true_sleep = float(np.sum(sleep_mask(ctx.y_true, ctx))) * dt
+        pred_sleep = float(np.sum(sleep_mask(y_pred, ctx))) * dt
         tst = _mape(true_sleep, pred_sleep)
 
-        true_w = waso_minutes(ctx.y_true, dt)
-        pred_w = waso_minutes(y_pred, dt)
+        true_w = waso_minutes(ctx.y_true, dt, ctx)
+        pred_w = waso_minutes(y_pred, dt, ctx)
         waso = _mape(true_w, pred_w)
 
         gaps = [

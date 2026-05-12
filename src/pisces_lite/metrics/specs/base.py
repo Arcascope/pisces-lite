@@ -76,10 +76,30 @@ def min_stage_minutes(ctx: EvalContext) -> float:
     return float(ctx.extra.get("min_stage_minutes", 5.0))
 
 
-def waso_minutes(labels: np.ndarray, dt: float) -> float:
-    sleep_mask = labels > 0
-    if np.sum(sleep_mask) == 0:
+def off_wrist_class_indices(ctx: EvalContext | None) -> set[int]:
+    if ctx is None:
+        return set()
+    names = ctx.extra.get("class_names") or []
+    return {
+        idx
+        for idx, name in enumerate(names)
+        if str(name).lower().replace("-", "_") in {"off_wrist", "offwrist"}
+    }
+
+
+def sleep_mask(labels: np.ndarray, ctx: EvalContext | None = None) -> np.ndarray:
+    labels_arr = np.asarray(labels)
+    mask = labels_arr > 0
+    for class_idx in off_wrist_class_indices(ctx):
+        mask = mask & (labels_arr != class_idx)
+    return mask
+
+
+def waso_minutes(labels: np.ndarray, dt: float, ctx: EvalContext | None = None) -> float:
+    labels_arr = np.asarray(labels)
+    sleep_mask_arr = sleep_mask(labels_arr, ctx)
+    if np.sum(sleep_mask_arr) == 0:
         return 0.0
-    idxs = np.where(sleep_mask)[0]
-    wake_in_span = int(np.sum(labels[idxs[0] : idxs[-1] + 1] == 0))
+    idxs = np.where(sleep_mask_arr)[0]
+    wake_in_span = int(np.sum(labels_arr[idxs[0] : idxs[-1] + 1] == 0))
     return wake_in_span * dt

@@ -82,6 +82,47 @@ def test_wide_format_record(tmp_path):
     assert len(df) == 1
 
 
+def test_off_wrist_class_is_not_sleep_for_tst_and_waso(tmp_path):
+    cfg = MetricsConfig(
+        num_classes=4,
+        class_names=["wake", "light", "deep", "rem", "off_wrist"],
+        psg_dt_minutes=1.0,
+        min_stage_minutes=0.0,
+        metrics=[
+            "true_tst_minutes",
+            "pred_tst_minutes",
+            "true_waso_minutes",
+            "pred_waso_minutes",
+            "tst_mape",
+            "waso_mape",
+        ],
+        format="wide",
+    )
+    logger = MetricsLogger(cfg)
+    csv_path = tmp_path / "cv_results.csv"
+
+    y_true = np.array([4, 0, 1, 0, 1, 4])
+    y_pred = np.array([4, 0, 1, 0, 1, 4])
+    y_proba = np.eye(5, dtype=float)[y_pred]
+    logger.record(
+        csv_path,
+        y_true=y_true,
+        y_pred_proba=y_proba,
+        y_pred=y_pred,
+        run_id="r1",
+        fold=0,
+        epoch=1,
+    )
+
+    row = load_wide(csv_path).iloc[0]
+    assert row["true_tst_minutes"] == pytest.approx(2.0)
+    assert row["pred_tst_minutes"] == pytest.approx(2.0)
+    assert row["true_waso_minutes"] == pytest.approx(1.0)
+    assert row["pred_waso_minutes"] == pytest.approx(1.0)
+    assert row["tst_mape"] == pytest.approx(0.0)
+    assert row["waso_mape"] == pytest.approx(0.0)
+
+
 def test_per_record_append_and_callback(tmp_path):
     cfg = _common_config(format="long")
     logger = MetricsLogger(cfg)
