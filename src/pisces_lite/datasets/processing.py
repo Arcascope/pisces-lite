@@ -26,6 +26,40 @@ from pisces_lite.datasets.constants import (
 )
 
 
+def _regrid_psg_uniform(
+    psg_data: pd.DataFrame,
+    start_time: int,
+    end_time: int,
+    timestamp_col: str,
+    psg_col: str,
+    psg_dt: int,
+) -> pd.DataFrame:
+    """
+    Reindex PSG onto a uniform ``psg_dt`` grid spanning ``[start_time, end_time]``,
+    filling any gap positions (epochs the source PSG did not score) with
+    ``PSG_MASK``.
+
+    This is needed because the accel feature pipeline (``ProcessingConfig.apply``
+    via RegulariseNUFFTGrid) produces ``X`` on a uniform 30 s grid anchored at
+    ``start_time``. Source-times PSG, however, can contain rows whose timestamps
+    skip multiple epochs (real scoring gaps). Without re-gridding, positional
+    indexing post-gap would land ``y[i]`` at a real time later than ``X[i]``,
+    silently shifting labels relative to features.
+    """
+    if psg_data.empty:
+        return psg_data
+    target_timestamps = np.arange(int(start_time), int(end_time) + 1, int(psg_dt),
+                                  dtype=psg_data[timestamp_col].dtype)
+    gridded = (
+        psg_data.set_index(timestamp_col)
+        .reindex(target_timestamps)
+        .reset_index()
+    )
+    gridded.rename(columns={"index": timestamp_col}, inplace=True)
+    gridded[psg_col] = gridded[psg_col].fillna(PSG_MASK).astype(int)
+    return gridded
+
+
 def psg_map(
     psg_data: pd.DataFrame,
     mapping_dict: Dict,
@@ -61,8 +95,17 @@ def align_trim(
     psg_data: pd.DataFrame,
     timestamp_col: str = TIMESTAMP_COL,
     psg_dt: int = PSG_DT,
+    psg_col: str = PSG_COL,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Trim both frames to their overlapping time range, snapped to PSG epochs."""
+    """Trim both frames to their overlapping time range, snapped to PSG epochs.
+
+    The returned PSG frame is also re-gridded onto a uniform ``psg_dt`` grid
+    anchored at ``start_time``; any source-PSG scoring gap appears as one or
+    more rows filled with ``PSG_MASK``. This guarantees that ``psg[i]``
+    corresponds to wall-clock time ``start_time + i * psg_dt`` — which is the
+    convention assumed by the downstream feature pipeline, which lays X out
+    on the same uniform grid.
+    """
     accelerometer_data = accelerometer_data.sort_values(by=timestamp_col)
     psg_data = psg_data.sort_values(by=timestamp_col)
     start_time = max(
@@ -80,6 +123,14 @@ def align_trim(
         (accelerometer_data[timestamp_col] >= start_time)
         & (accelerometer_data[timestamp_col] <= end_time)
     ]
+    psg_data = _regrid_psg_uniform(
+        psg_data,
+        start_time=int(start_time),
+        end_time=int(end_time),
+        timestamp_col=timestamp_col,
+        psg_col=psg_col,
+        psg_dt=psg_dt,
+    )
     return accelerometer_data, psg_data
 
 

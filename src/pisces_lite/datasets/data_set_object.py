@@ -195,8 +195,10 @@ class DataSetObject:
         ``id_symbol``), it is used when ``id_templates`` is not supplied.
         """
         cfg_template = None
+        cfg_templates_by_feature = {}
         if self.config is not None:
             cfg_template = getattr(self.config, "id_pattern", None)
+            cfg_templates_by_feature = getattr(self.config, "id_pattern_by_feature", None) or {}
 
         for feature in self.features:
             feature_path = self.get_feature_path(feature)
@@ -211,9 +213,11 @@ class DataSetObject:
                 and not any(f.endswith(s) for s in ignore_endswith)
             ]
             if isinstance(id_templates, dict):
-                id_template = id_templates.get(feature, cfg_template)
+                id_template = id_templates.get(
+                    feature, cfg_templates_by_feature.get(feature, cfg_template)
+                )
             else:
-                id_template = id_templates or cfg_template
+                id_template = id_templates or cfg_templates_by_feature.get(feature, cfg_template)
             if relevant:
                 self.add_feature_files(feature, relevant, id_template, id_symbol)
 

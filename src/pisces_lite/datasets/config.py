@@ -48,6 +48,7 @@ class CSVConfig:
 @dataclass
 class TimestampConfig:
     unit: TimestampUnit = "s"
+    unit_by_feature: Optional[Dict[str, TimestampUnit]] = None
 
 
 @dataclass
@@ -62,6 +63,10 @@ class DataSetConfig:
           "psg":   { "mapping_preset": "dreamt" },
           "csv":   { "delimiter": "," },
           "timestamp": { "unit": "s" },
+          "timestamp": {
+            "unit": "s",
+            "unit_by_feature": { "accelerometer": "ms", "psg": "s" }
+          },
           "id_pattern": "<<ID>>.csv"
         }
     """
@@ -73,6 +78,7 @@ class DataSetConfig:
     timestamp: TimestampConfig = field(default_factory=TimestampConfig)
     feature_prefix: Optional[str] = None
     id_pattern: Optional[str] = None
+    id_pattern_by_feature: Optional[Dict[str, str]] = None
     id_symbol: str = "<<ID>>"
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -99,6 +105,7 @@ class DataSetConfig:
             timestamp=_section("timestamp", TimestampConfig),
             feature_prefix=d.get("feature_prefix"),
             id_pattern=d.get("id_pattern"),
+            id_pattern_by_feature=d.get("id_pattern_by_feature"),
             id_symbol=d.get("id_symbol", "<<ID>>"),
             metadata=dict(d.get("metadata") or {}),
         )
@@ -140,6 +147,11 @@ def _apply_timestamp_unit(df: pd.DataFrame, unit: TimestampUnit) -> pd.DataFrame
     return df
 
 
+def _timestamp_unit_for_feature(cfg: DataSetConfig, feature: str) -> TimestampUnit:
+    per_feature = cfg.timestamp.unit_by_feature or {}
+    return per_feature.get(feature, cfg.timestamp.unit)
+
+
 def load_subject(data_set, subject_id: str) -> SubjectData:
     """Load one subject, applying ``data_set.config`` transforms if present.
 
@@ -160,8 +172,10 @@ def load_subject(data_set, subject_id: str) -> SubjectData:
 
     cfg: Optional[DataSetConfig] = getattr(data_set, "config", None)
     if cfg is not None:
-        accel_df = _apply_timestamp_unit(accel_df, cfg.timestamp.unit)
-        psg_df = _apply_timestamp_unit(psg_df, cfg.timestamp.unit)
+        accel_df = _apply_timestamp_unit(
+            accel_df, _timestamp_unit_for_feature(cfg, "accelerometer")
+        )
+        psg_df = _apply_timestamp_unit(psg_df, _timestamp_unit_for_feature(cfg, "psg"))
 
         if cfg.accel.gravity_divisor != 1.0:
             accel_df = accel_df.copy()

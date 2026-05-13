@@ -123,7 +123,47 @@ def test_config_loads_from_json(tmp_path):
     assert ds.config is not None
     assert ds.config.accel.gravity_divisor == 64.0
     assert ds.config.timestamp.unit == "ms"
+    assert ds.config.timestamp.unit_by_feature is None
     assert ds.config.effective_psg_mapping["N1"] == 1
+
+
+def test_load_subject_applies_per_feature_timestamp_units(tmp_path):
+    ds_root = tmp_path / "SENSE"
+    accel_dir = ds_root / "cleaned_accelerometer"
+    psg_dir = ds_root / "cleaned_psg"
+    accel_dir.mkdir(parents=True)
+    psg_dir.mkdir(parents=True)
+
+    pd.DataFrame({
+        "t": [1_700_000_000_000.0, 1_700_000_000_010.0, 1_700_000_000_020.0],
+        "x": [0.0, 0.1, 0.2],
+        "y": [0.0, 0.0, 0.0],
+        "z": [1.0, 1.0, 1.0],
+    }).to_csv(accel_dir / "sen003_accel.csv", index=False)
+    pd.DataFrame({
+        "time": [1_700_000_000.0, 1_700_000_030.0],
+        "stage": [0, 1],
+    }).to_csv(psg_dir / "sen003_psg.csv", index=False)
+    (ds_root / "data_set.json").write_text(json.dumps({
+        "name": "SENSE",
+        "timestamp": {
+            "unit": "s",
+            "unit_by_feature": {
+                "accelerometer": "ms",
+                "psg": "s",
+            },
+        },
+        "id_pattern_by_feature": {
+            "accelerometer": "<<ID>>_accel.csv",
+            "psg": "<<ID>>_psg.csv",
+        },
+    }))
+
+    ds = DataSetObject.find_data_sets(tmp_path)["SENSE"]
+    sd = load_subject(ds, "sen003")
+
+    assert sd.accel_df[TIMESTAMP_COL].iloc[0] == pytest.approx(1_700_000_000.0)
+    assert sd.psg_df[TIMESTAMP_COL].iloc[0] == pytest.approx(1_700_000_000.0)
 
 
 def test_load_subject_applies_transforms(tmp_path):
