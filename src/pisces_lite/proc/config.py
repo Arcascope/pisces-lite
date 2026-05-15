@@ -32,6 +32,7 @@ class ProcessingConfig:
     norm_stats: Optional[Dict[str, Dict[str, list]]] = field(default=None)
     make_plots: bool = True
     jerk_diff: bool = True
+    phase_magnitude_threshold: float = 0.0
 
     @classmethod
     def from_json(cls, path: "Path | str") -> "ProcessingConfig":
@@ -62,17 +63,19 @@ class ProcessingConfig:
         return all_freq[filt_freq]
 
     def _build_pipeline(self):
-        if self.type != "nufft":
+        if self.type not in {"nufft", "c_nufft"}:
             raise NotImplementedError(
-                f"pisces_lite.proc only vendors the 'nufft' pipeline; got type={self.type!r}."
+                "pisces_lite.proc only vendors the 'nufft' and 'c_nufft' "
+                f"pipelines; got type={self.type!r}."
             )
         from pisces_lite.proc.processing import nufft_based_features
 
         secoverlap = self.window_seconds - self.window_step_seconds
+        features = ["c_nufft"] if self.type == "c_nufft" else ["spectrogram"]
         return nufft_based_features(
             secperseg=self.window_seconds,
             secoverlap=secoverlap,
-            features=["spectrogram"],
+            features=features,
             target_fs=self.fs,
             feature_kwargs={
                 "fmin": self.fmin,
@@ -80,6 +83,7 @@ class ProcessingConfig:
                 "time_downsample_rate": self.time_downsample_rate,
             },
             use_diff=self.jerk_diff,
+            phase_magnitude_threshold=self.phase_magnitude_threshold,
         )
 
     def extract_features(self, accel: np.ndarray) -> np.ndarray:

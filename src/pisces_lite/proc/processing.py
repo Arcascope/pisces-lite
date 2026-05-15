@@ -59,23 +59,36 @@ class ComputeJerkNUFFT(ProcessingStep):
 class ComputeSpectrogramNUFFT(ProcessingStep):
     """senpy.JerkData (non-uniform) → senpy.SpectrogramResult via NUFFT."""
 
-    def __init__(self, secperseg: float, secoverlap: float, target_fs: float = 0.0):
+    def __init__(
+        self,
+        secperseg: float,
+        secoverlap: float,
+        target_fs: float = 0.0,
+        return_phase: bool = False,
+        phase_magnitude_threshold: float = 0.0,
+    ):
         self.secperseg = secperseg
         self.secoverlap = secoverlap
         self.target_fs = target_fs
+        self.return_phase = return_phase
+        self.phase_magnitude_threshold = phase_magnitude_threshold
 
     @property
     def name(self) -> str:
         return f"nufft_spectrogram({self.secperseg}s,overlap={self.secoverlap}s)"
 
     def transform(self, jerk: "senpy.JerkData") -> "senpy.SpectrogramResult":
-        return senpy.compute_spectrogram_nufft(
-            timestamps=jerk.timestamps_s,
-            signal=jerk.jerk,
-            secperseg=self.secperseg,
-            secoverlap=self.secoverlap,
-            target_fs=self.target_fs,
-        )
+        kwargs = {
+            "timestamps": jerk.timestamps_s,
+            "signal": jerk.jerk,
+            "secperseg": self.secperseg,
+            "secoverlap": self.secoverlap,
+            "target_fs": self.target_fs,
+        }
+        if self.return_phase:
+            kwargs["return_phase"] = True
+            kwargs["phase_magnitude_threshold"] = self.phase_magnitude_threshold
+        return senpy.compute_spectrogram_nufft(**kwargs)
 
 
 class RegulariseNUFFTGrid(ProcessingStep):
@@ -101,16 +114,33 @@ class RegulariseNUFFTGrid(ProcessingStep):
 
         expected_times = np.arange(0.0, t_end + tol, hop)
         dense_Sxx = np.zeros((len(expected_times), n_freqs), dtype=Sxx.dtype)
+        phase_vector = getattr(result, "phase_vector", None)
+        phase_weight = getattr(result, "phase_weight", None)
+        dense_phase_vector = None
+        dense_phase_weight = None
+        if phase_vector is not None and phase_weight is not None:
+            dense_phase_vector = np.zeros(
+                (len(expected_times), n_freqs, 2), dtype=phase_vector.dtype
+            )
+            dense_phase_weight = np.zeros((len(expected_times), n_freqs), dtype=phase_weight.dtype)
+
         for i, t_exp in enumerate(expected_times):
             dists = np.abs(times - t_exp)
             j = int(np.argmin(dists))
             if dists[j] <= tol:
                 dense_Sxx[i] = Sxx[j]
-        return senpy.SpectrogramResult(
-            frequencies=result.frequencies,
-            times=expected_times,
-            Sxx=dense_Sxx,
-        )
+                if dense_phase_vector is not None and dense_phase_weight is not None:
+                    dense_phase_vector[i] = phase_vector[j]
+                    dense_phase_weight[i] = phase_weight[j]
+        kwargs = {
+            "frequencies": result.frequencies,
+            "times": expected_times,
+            "Sxx": dense_Sxx,
+        }
+        if dense_phase_vector is not None and dense_phase_weight is not None:
+            kwargs["phase_vector"] = dense_phase_vector
+            kwargs["phase_weight"] = dense_phase_weight
+        return senpy.SpectrogramResult(**kwargs)
 
 
 class GetFeatures(ProcessingStep):
@@ -162,14 +192,20 @@ def nufft_based_features(
     target_fs: float = 0.0,
     feature_kwargs: dict | None = None,
     use_diff: bool = True,
+    phase_magnitude_threshold: float = 0.0,
 ) -> CompositeStep:
     """Build: raw (N, 4) → JerkNUFFT → NUFFTSpectrogram → regularise → GetFeatures."""
     feature_kwargs = feature_kwargs or {}
+    return_phase = any(pf.feature_requires_phase(name) for name in features)
     return CompositeStep(
         substeps=[
             ComputeJerkNUFFT(use_diff=use_diff),
             ComputeSpectrogramNUFFT(
-                secperseg=secperseg, secoverlap=secoverlap, target_fs=target_fs,
+                secperseg=secperseg,
+                secoverlap=secoverlap,
+                target_fs=target_fs,
+                return_phase=return_phase,
+                phase_magnitude_threshold=phase_magnitude_threshold,
             ),
             RegulariseNUFFTGrid(hop_seconds=secperseg - secoverlap),
             GetFeatures(features=features, feature_kwargs=feature_kwargs),

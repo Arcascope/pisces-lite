@@ -5,9 +5,7 @@ Carved out of ``pisces2.configuration.processing_configuration`` and
 importing the full pisces2 package (which pulls in Keras/TensorFlow and
 a large model zoo at import time).
 
-Only the ``nufft`` pipeline is vendored — feature names other than
-``"spectrogram"`` and pipeline ``type``s other than ``"nufft"`` are not
-supported here.
+Only the ``nufft`` and ``c_nufft`` pipelines are vendored here.
 """
 from pisces_lite.proc.config import ProcessingConfig
 
