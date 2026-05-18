@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Generic, List, TypeVar
+from typing import Generic, List, TypeVar
 
 import numpy as np
 import senpy
 
 from pisces_lite.proc import features as pf
+from pisces_lite.proc.constants import SPECTROGRAM_PADDING_VALUE
 
 _log = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ class ComputeSpectrogramNUFFT(ProcessingStep):
 
 
 class RegulariseNUFFTGrid(ProcessingStep):
-    """Sparse NUFFT spectrogram → dense uniform-time grid, zero-filling gaps."""
+    """Sparse NUFFT spectrogram → dense uniform-time grid, sentinel-filling gaps."""
 
     def __init__(self, hop_seconds: float):
         self.hop_seconds = hop_seconds
@@ -100,7 +101,11 @@ class RegulariseNUFFTGrid(ProcessingStep):
         tol = hop / 2.0
 
         expected_times = np.arange(0.0, t_end + tol, hop)
-        dense_Sxx = np.zeros((len(expected_times), n_freqs), dtype=Sxx.dtype)
+        dense_Sxx = np.full(
+            (len(expected_times), n_freqs),
+            SPECTROGRAM_PADDING_VALUE,
+            dtype=Sxx.dtype,
+        )
         for i, t_exp in enumerate(expected_times):
             dists = np.abs(times - t_exp)
             j = int(np.argmin(dists))
