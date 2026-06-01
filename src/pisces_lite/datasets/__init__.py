@@ -41,6 +41,13 @@ from pisces_lite.datasets.config import (
     TimestampConfig,
     load_subject,
 )
+from pisces_lite.datasets.adapters import (
+    DEFAULT_ADAPTER_FILENAME,
+    DataSetAdapter,
+    import_adapter_module,
+    load_data_sets_from_adapter,
+    normalize_data_sets,
+)
 from pisces_lite.datasets.data_set_object import DataSetObject, get_subject_data
 from pisces_lite.datasets.id_extraction import IdExtractor, SimplifiablePrefixTree
 from pisces_lite.datasets.loading import determine_header_rows_and_delimiter
@@ -57,7 +64,9 @@ __all__ = [
     "ACC_HZ",
     "AccelConfig",
     "CSVConfig",
+    "DEFAULT_ADAPTER_FILENAME",
     "DELTA_T_COL",
+    "DataSetAdapter",
     "DataSetConfig",
     "DataSetObject",
     "PSGConfig",
@@ -95,7 +104,10 @@ __all__ = [
     "determine_header_rows_and_delimiter",
     "get_class_names",
     "get_subject_data",
+    "import_adapter_module",
+    "load_data_sets_from_adapter",
     "mask_data",
+    "normalize_data_sets",
     "psg_map",
     "psg_to_sleep_wake",
     "rescale_spectrogram",
