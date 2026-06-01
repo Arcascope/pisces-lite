@@ -124,7 +124,7 @@ def auroc_numpy(y_true: np.ndarray, y_score: np.ndarray) -> float:
     return (sum_ranks_pos - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
 
 
-def etc_score(model: ETCModel, spectrograms, labels) -> float:
+def etc_score(model: ETCModel, spectrograms, labels, reduce: str = "macro") -> float:
     """ETC score: AUROC of ``model``'s wake score in the ``(sleep=1, wake=0)`` mode.
 
     Args:
@@ -134,25 +134,46 @@ def etc_score(model: ETCModel, spectrograms, labels) -> float:
         labels: Matching ground-truth labels: ``(T,)``, ``(B, T)``, or a list of
             ``(T_i,)`` arrays. Any value ``> 0`` is treated as sleep, ``0`` as
             wake, and negative values (padding) are ignored.
+        reduce: How to combine recordings. ``"macro"`` (default) computes a
+            per-recording AUROC and averages those numbers, so every recording
+            is weighted equally. ``"micro"`` pools every valid timestamp into a
+            single AUROC, so longer recordings count for more.
 
     Returns:
-        Pooled AUROC across every valid timestamp in the data set; the positive
-        class is sleep, so a model that smooths energy well scores near ``1.0``.
+        AUROC with sleep as the positive class, so a model that smooths energy
+        well scores near ``1.0``. Recordings with only one class present
+        (AUROC undefined) are skipped under ``"macro"``; returns ``nan`` if no
+        recording yields a defined AUROC.
     """
-    scores: list[np.ndarray] = []
-    truths: list[np.ndarray] = []
+    if reduce not in ("macro", "micro"):
+        raise ValueError(f"reduce must be 'macro' or 'micro'; got {reduce!r}")
+
     specs = _iter_recordings(spectrograms, recording_ndim=2)
     labs = _iter_recordings(labels, recording_ndim=1)
+
+    per_record: list[float] = []
+    pooled_scores: list[np.ndarray] = []
+    pooled_truths: list[np.ndarray] = []
     for spec, lab in zip(specs, labs):
         wake = model.wake_proba(np.asarray(spec))
-        scores.append(np.ravel(1.0 - wake))  # sleep-likelihood
-        truths.append(np.ravel(np.asarray(lab)))
+        sleep_score = np.ravel(1.0 - wake)  # sleep-likelihood
+        truth = np.ravel(np.asarray(lab))
+        valid = truth >= 0
+        y_bin = (truth[valid] > 0).astype(int)  # sleep=1, wake=0
+        s = sleep_score[valid]
+        if reduce == "macro":
+            per_record.append(auroc_numpy(y_bin, s))
+        else:
+            pooled_scores.append(s)
+            pooled_truths.append(y_bin)
 
-    score = np.concatenate(scores) if scores else np.empty(0)
-    truth = np.concatenate(truths) if truths else np.empty(0)
-    valid = truth >= 0
-    y_bin = (truth[valid] > 0).astype(int)  # sleep=1, wake=0
-    return auroc_numpy(y_bin, score[valid])
+    if reduce == "macro":
+        defined = [a for a in per_record if not np.isnan(a)]
+        return float(np.mean(defined)) if defined else float("nan")
+
+    score = np.concatenate(pooled_scores) if pooled_scores else np.empty(0)
+    truth = np.concatenate(pooled_truths) if pooled_truths else np.empty(0)
+    return auroc_numpy(truth, score)
 
 
 def _iter_recordings(data, recording_ndim: int):

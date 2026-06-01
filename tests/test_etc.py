@@ -85,3 +85,41 @@ def test_etc_score_padding_and_list_forms():
     score_batch = etc_score(m, np.stack([s1, s2]), np.stack([l1, l2]))
     assert pytest.approx(score_list) == score_batch
     assert score_list > 0.99
+
+
+def test_etc_score_macro_is_default_and_averages_per_recording():
+    m = ETCModel(n_timestamps=70, kernel_width=0.5)
+    rng = np.random.default_rng(11)
+    # recordings of differing length / separability
+    s1, l1 = _block_recording(rng, T=300)
+    s2, l2 = _block_recording(rng, T=180)
+    S, L = [s1, s2], [l1, l2]
+
+    # default (macro) == mean of independently scored batches-of-1
+    per = [etc_score(m, s, l) for s, l in zip(S, L)]
+    assert pytest.approx(etc_score(m, S, L)) == float(np.mean(per))
+    # a single recording scores the same either way
+    assert pytest.approx(etc_score(m, s1, l1)) == per[0]
+
+
+def test_etc_score_macro_skips_undefined_recordings():
+    m = ETCModel(n_timestamps=70, kernel_width=0.5)
+    rng = np.random.default_rng(12)
+    s1, l1 = _block_recording(rng)
+    # an all-sleep recording has undefined AUROC and must be skipped
+    s2 = rng.random((120, 12))
+    l2 = np.ones(120, dtype=int)
+    assert pytest.approx(etc_score(m, [s1, s2], [l1, l2])) == etc_score(m, s1, l1)
+
+
+def test_etc_score_micro_pools_timestamps():
+    m = ETCModel(n_timestamps=70, kernel_width=0.5)
+    rng = np.random.default_rng(13)
+    s1, l1 = _block_recording(rng, T=300)
+    s2, l2 = _block_recording(rng, T=180)
+    # micro == concatenating all valid timestamps into one AUROC
+    s_all = np.concatenate([1.0 - m.wake_proba(s1), 1.0 - m.wake_proba(s2)])
+    y_all = np.concatenate([(l1 > 0).astype(int), (l2 > 0).astype(int)])
+    assert pytest.approx(etc_score(m, [s1, s2], [l1, l2], reduce="micro")) == auroc_numpy(
+        y_all, s_all
+    )
