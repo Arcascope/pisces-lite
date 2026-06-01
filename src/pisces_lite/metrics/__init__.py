@@ -13,6 +13,7 @@ dataset, training_dataset``.
 """
 from pisces_lite.metrics.config import MetricsConfig, default_class_names
 from pisces_lite.metrics.context import EvalContext
+from pisces_lite.metrics.etc import ETCModel, auroc_numpy, etc_score
 from pisces_lite.metrics.io import load_long, load_wide, to_long, to_wide
 from pisces_lite.metrics.logger import IDENTITY_COLUMNS, MetricsLogger
 from pisces_lite.metrics.specs import (
@@ -24,8 +25,11 @@ from pisces_lite.metrics.specs import (
 )
 
 __all__ = [
+    "ETCModel",
     "EvalContext",
     "IDENTITY_COLUMNS",
+    "auroc_numpy",
+    "etc_score",
     "MetricFn",
     "MetricSpec",
     "MetricsConfig",
