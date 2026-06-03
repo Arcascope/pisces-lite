@@ -14,7 +14,7 @@ import re
 import warnings
 from collections import defaultdict
 from pathlib import Path
-from typing import DefaultDict, Dict, Iterable, List, Optional
+from typing import Callable, DefaultDict, Dict, Iterable, List, Optional
 
 import pandas as pd
 
@@ -30,6 +30,9 @@ from pisces_lite.datasets.loading import determine_header_rows_and_delimiter
 
 
 _log = logging.getLogger(__name__)
+
+
+FeatureLoader = Callable[[str], Optional[pd.DataFrame]]
 
 
 class DataSetObject:
@@ -68,6 +71,7 @@ class DataSetObject:
 
         self._feature_map: DefaultDict[str, Dict[str, str]] = defaultdict(dict)
         self._feature_cache: DefaultDict[str, Dict[str, pd.DataFrame]] = defaultdict(dict)
+        self._feature_loaders: Dict[str, FeatureLoader] = {}
 
     def __str__(self) -> str:
         return f"{self.name}: {self.path}"
@@ -75,7 +79,13 @@ class DataSetObject:
     @property
     def features(self) -> List[str]:
         """Union of file-map features and in-memory cache features."""
-        return list(set(list(self._feature_cache.keys()) + list(self._feature_map.keys())))
+        return list(
+            set(
+                list(self._feature_cache.keys())
+                + list(self._feature_map.keys())
+                + list(self._feature_loaders.keys())
+            )
+        )
 
     @property
     def feature_prefix(self) -> str:
@@ -93,6 +103,22 @@ class DataSetObject:
 
     def set_feature_data(self, feature: str, id: str, data: pd.DataFrame) -> None:
         self._feature_cache[feature][id] = data
+
+    def set_feature_loader(
+        self,
+        feature: str,
+        loader: FeatureLoader,
+        ids: "Iterable[str] | None" = None,
+    ) -> None:
+        """Register a lazy feature loader for custom dataset layouts.
+
+        The loader receives a subject id and returns the corresponding feature
+        frame. This keeps non-standard parsing in dataset-local adapters while
+        preserving the normal ``DataSetObject.get_feature_data`` surface.
+        """
+        self._feature_loaders[feature] = loader
+        if ids is not None:
+            self.ids = sorted(set(self.ids).union(str(id_) for id_ in ids))
 
     def get_feature_files(self, feature: str) -> Dict[str, str]:
         return dict(self._feature_map[feature])
@@ -124,6 +150,24 @@ class DataSetObject:
             warnings.warn(f"ID {id!r} not found in {self.name}")
             return None
         if (df := self._feature_cache[feature].get(id)) is not None:
+            return df
+
+        if (loader := self._feature_loaders.get(feature)) is not None:
+            try:
+                df = loader(id)
+                if df is None:
+                    return None
+                if len(df) and len(df.columns):
+                    df = df.sort_values(by=df.columns[0])
+            except Exception as exc:
+                warnings.warn(
+                    f"Error loading {feature} for {id} in {self.name}:\n{exc}",
+                    category=RuntimeWarning,
+                    stacklevel=2,
+                )
+                return None
+            if keep_in_memory:
+                self._feature_cache[feature][id] = df
             return df
 
         file = self.get_filename(feature, id)

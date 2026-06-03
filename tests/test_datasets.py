@@ -17,6 +17,7 @@ from pisces_lite.datasets import (
     Y_COL,
     Z_COL,
     get_subject_data,
+    load_data_sets_from_adapter,
     load_subject,
 )
 
@@ -229,3 +230,50 @@ def test_config_missing_name_raises(tmp_path):
     path.write_text(json.dumps({"accel": {"gravity_divisor": 2.0}}))
     with pytest.raises(ValueError, match="must contain a 'name'"):
         DataSetConfig.from_json(path)
+
+
+def test_custom_feature_loader_is_lazy_and_cached(tmp_path):
+    ds = DataSetObject("custom", tmp_path)
+    calls = []
+
+    def load_accel(subject_id):
+        calls.append(subject_id)
+        return pd.DataFrame({
+            "t": [2.0, 1.0],
+            "x": [0.2, 0.1],
+            "y": [0.0, 0.0],
+            "z": [1.0, 1.0],
+        })
+
+    ds.set_feature_loader("accelerometer", load_accel, ids=["subject_001"])
+
+    first = ds.get_feature_data("accelerometer", "subject_001")
+    second = ds.get_feature_data("accelerometer", "subject_001")
+
+    assert calls == ["subject_001"]
+    assert first is second
+    assert list(first.iloc[:, 0]) == [1.0, 2.0]
+
+
+def test_load_data_sets_from_adapter_file(tmp_path):
+    adapter = tmp_path / "pisces_lite_adapter.py"
+    adapter.write_text(
+        "import pandas as pd\n"
+        "from pisces_lite.datasets import DataSetObject\n"
+        "\n"
+        "def load_data_set(root):\n"
+        "    ds = DataSetObject('adapter_ds', root)\n"
+        "    ds.set_feature_loader(\n"
+        "        'psg',\n"
+        "        lambda subject_id: pd.DataFrame({'time': [0.0], 'stage': [1]}),\n"
+        "        ids=['s1'],\n"
+        "    )\n"
+        "    return ds\n"
+    )
+
+    loaded = load_data_sets_from_adapter(tmp_path)
+
+    assert set(loaded) == {"adapter_ds"}
+    ds = loaded["adapter_ds"]
+    assert ds.ids == ["s1"]
+    assert ds.get_feature_data("psg", "s1").iloc[0, 1] == 1

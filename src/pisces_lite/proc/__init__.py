@@ -10,5 +10,6 @@ Only the ``nufft`` pipeline is vendored — feature names other than
 supported here.
 """
 from pisces_lite.proc.config import ProcessingConfig
+from pisces_lite.proc.constants import SPECTROGRAM_PADDING_VALUE
 
-__all__ = ["ProcessingConfig"]
+__all__ = ["ProcessingConfig", "SPECTROGRAM_PADDING_VALUE"]
