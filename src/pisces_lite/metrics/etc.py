@@ -12,6 +12,8 @@ wake epochs are to pick out from a crude energy smoother alone.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import itertools
+import warnings
 
 import numpy as np
 
@@ -154,7 +156,14 @@ def etc_score(model: ETCModel, spectrograms, labels, reduce: str = "macro") -> f
     per_record: list[float] = []
     pooled_scores: list[np.ndarray] = []
     pooled_truths: list[np.ndarray] = []
-    for spec, lab in zip(specs, labs):
+
+    _MISSING = object()
+    mismatched_counts = False
+    for spec, lab in itertools.zip_longest(specs, labs, fillvalue=_MISSING):
+        if spec is _MISSING or lab is _MISSING:
+            mismatched_counts = True
+            break
+
         wake = model.wake_proba(np.asarray(spec))
         sleep_score = np.ravel(1.0 - wake)  # sleep-likelihood
         truth = np.ravel(np.asarray(lab))
@@ -166,6 +175,14 @@ def etc_score(model: ETCModel, spectrograms, labels, reduce: str = "macro") -> f
         else:
             pooled_scores.append(s)
             pooled_truths.append(y_bin)
+
+    if mismatched_counts:
+        warnings.warn(
+            "etc_score got mismatched numbers of recordings in spectrograms vs labels; "
+            "scoring only the paired subset.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     if reduce == "macro":
         defined = [a for a in per_record if not np.isnan(a)]

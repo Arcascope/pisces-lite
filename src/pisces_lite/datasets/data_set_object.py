@@ -160,7 +160,11 @@ class DataSetObject:
                 if len(df) and len(df.columns):
                     df = df.sort_values(by=df.columns[0])
             except Exception as exc:
-                warnings.warn(f"Error loading {feature} for {id} in {self.name}:\n{exc}")
+                warnings.warn(
+                    f"Error loading {feature} for {id} in {self.name}:\n{exc}",
+                    category=RuntimeWarning,
+                    stacklevel=2,
+                )
                 return None
             if keep_in_memory:
                 self._feature_cache[feature][id] = df
