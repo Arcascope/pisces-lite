@@ -32,6 +32,8 @@ class ProcessingConfig:
     norm_stats: Optional[Dict[str, Dict[str, list]]] = field(default=None)
     make_plots: bool = True
     jerk_diff: bool = True
+    detrend: bool = True
+    spectrogram_kind: str = "magnitude"
 
     @classmethod
     def from_json(cls, path: "Path | str") -> "ProcessingConfig":
@@ -43,6 +45,9 @@ class ProcessingConfig:
         d = dict(d)
         if "kwargs" in d:
             d.update(d.pop("kwargs"))
+        for alias in ("spectrogram_mode", "stft_mode", "stft_kind", "kind", "mode"):
+            if alias in d and "spectrogram_kind" not in d:
+                d["spectrogram_kind"] = d.pop(alias)
         known = {f for f in cls.__dataclass_fields__}
         return cls(**{k: v for k, v in d.items() if k in known})
 
@@ -80,6 +85,8 @@ class ProcessingConfig:
                 "time_downsample_rate": self.time_downsample_rate,
             },
             use_diff=self.jerk_diff,
+            detrend=self.detrend,
+            spectrogram_kind=self.spectrogram_kind,
         )
 
     def extract_features(self, accel: np.ndarray) -> np.ndarray:

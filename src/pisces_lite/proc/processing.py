@@ -60,22 +60,36 @@ class ComputeJerkNUFFT(ProcessingStep):
 class ComputeSpectrogramNUFFT(ProcessingStep):
     """senpy.JerkData (non-uniform) → senpy.SpectrogramResult via NUFFT."""
 
-    def __init__(self, secperseg: float, secoverlap: float, target_fs: float = 0.0):
+    def __init__(
+        self,
+        secperseg: float,
+        secoverlap: float,
+        target_fs: float = 0.0,
+        detrend: bool = True,
+        spectrogram_kind: str = "magnitude",
+    ):
         self.secperseg = secperseg
         self.secoverlap = secoverlap
         self.target_fs = target_fs
+        self.detrend = detrend
+        self.spectrogram_kind = _normalize_spectrogram_kind(spectrogram_kind)
 
     @property
     def name(self) -> str:
-        return f"nufft_spectrogram({self.secperseg}s,overlap={self.secoverlap}s)"
+        return (
+            f"nufft_spectrogram({self.secperseg}s,overlap={self.secoverlap}s,"
+            f"kind={self.spectrogram_kind},detrend={self.detrend})"
+        )
 
     def transform(self, jerk: "senpy.JerkData") -> "senpy.SpectrogramResult":
-        return senpy.compute_spectrogram_nufft(
+        return senpy.compute_nufft_spectrogram(
             timestamps=jerk.timestamps_s,
             signal=jerk.jerk,
-            secperseg=self.secperseg,
-            secoverlap=self.secoverlap,
+            window_s=self.secperseg,
+            overlap_s=self.secoverlap,
             target_fs=self.target_fs,
+            kind=self.spectrogram_kind,
+            detrend=self.detrend,
         )
 
 
@@ -160,6 +174,14 @@ class CompositeStep(ProcessingStep):
         return x_out
 
 
+def _normalize_spectrogram_kind(kind: str) -> str:
+    normalized = str(kind).replace("-", "_").lower()
+    aliases = {"mag": "magnitude", "magnitude": "magnitude", "power": "power", "psd": "psd"}
+    if normalized not in aliases:
+        raise ValueError("spectrogram_kind must be one of: 'mag', 'magnitude', 'power', 'psd'")
+    return aliases[normalized]
+
+
 def nufft_based_features(
     secperseg: float,
     secoverlap: float,
@@ -167,6 +189,8 @@ def nufft_based_features(
     target_fs: float = 0.0,
     feature_kwargs: dict | None = None,
     use_diff: bool = True,
+    detrend: bool = True,
+    spectrogram_kind: str = "magnitude",
 ) -> CompositeStep:
     """Build: raw (N, 4) → JerkNUFFT → NUFFTSpectrogram → regularise → GetFeatures."""
     feature_kwargs = feature_kwargs or {}
@@ -174,7 +198,11 @@ def nufft_based_features(
         substeps=[
             ComputeJerkNUFFT(use_diff=use_diff),
             ComputeSpectrogramNUFFT(
-                secperseg=secperseg, secoverlap=secoverlap, target_fs=target_fs,
+                secperseg=secperseg,
+                secoverlap=secoverlap,
+                target_fs=target_fs,
+                detrend=detrend,
+                spectrogram_kind=spectrogram_kind,
             ),
             RegulariseNUFFTGrid(hop_seconds=secperseg - secoverlap),
             GetFeatures(features=features, feature_kwargs=feature_kwargs),
