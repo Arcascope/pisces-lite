@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -34,6 +34,7 @@ class ProcessingConfig:
     jerk_diff: bool = True
     detrend: bool = True
     spectrogram_kind: str = "magnitude"
+    spectral_channels: Optional[List[str]] = None
 
     @classmethod
     def from_json(cls, path: "Path | str") -> "ProcessingConfig":
@@ -71,19 +72,36 @@ class ProcessingConfig:
             raise NotImplementedError(
                 f"pisces_lite.proc only vendors the 'nufft' pipeline; got type={self.type!r}."
             )
-        from pisces_lite.proc.processing import nufft_based_features
 
         secoverlap = self.window_seconds - self.window_step_seconds
+        feature_kwargs = {
+            "fmin": self.fmin,
+            "fmax": self.fmax,
+            "time_downsample_rate": self.time_downsample_rate,
+        }
+
+        if self.spectral_channels is not None:
+            from pisces_lite.proc.processing import stacked_nufft_pipeline
+
+            return stacked_nufft_pipeline(
+                secperseg=self.window_seconds,
+                secoverlap=secoverlap,
+                target_fs=self.fs,
+                channels=self.spectral_channels,
+                feature_kwargs=feature_kwargs,
+                use_diff=self.jerk_diff,
+                detrend=self.detrend,
+                spectrogram_kind=self.spectrogram_kind,
+            )
+
+        from pisces_lite.proc.processing import nufft_based_features
+
         return nufft_based_features(
             secperseg=self.window_seconds,
             secoverlap=secoverlap,
             features=["spectrogram"],
             target_fs=self.fs,
-            feature_kwargs={
-                "fmin": self.fmin,
-                "fmax": self.fmax,
-                "time_downsample_rate": self.time_downsample_rate,
-            },
+            feature_kwargs=feature_kwargs,
             use_diff=self.jerk_diff,
             detrend=self.detrend,
             spectrogram_kind=self.spectrogram_kind,
@@ -106,6 +124,20 @@ class ProcessingConfig:
 
         if self.normalization_mode == "none":
             return features
+
+        if features.ndim == 3:
+            # Per-channel z-normalization for stacked (T, F, C) spectrograms.
+            result = np.empty_like(features)
+            for c in range(features.shape[2]):
+                ch = features[:, :, c]
+                if self.normalization_mode == "znorm_axis1":
+                    mean = np.mean(ch, axis=1, keepdims=True)
+                    std = np.std(ch, axis=1, keepdims=True)
+                else:
+                    mean = np.mean(ch, axis=0, keepdims=True)
+                    std = np.std(ch, axis=0, keepdims=True)
+                result[:, :, c] = (ch - mean) / (std + 1e-7)
+            return result
 
         if self.normalization_mode == "znorm_axis1":
             norm_axis = 0 if features.shape[1] == 1 else 1

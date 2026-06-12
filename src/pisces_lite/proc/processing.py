@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Generic, List, TypeVar
+from typing import Generic, List, Optional, TypeVar
 
 import numpy as np
 import senpy
@@ -180,6 +180,170 @@ def _normalize_spectrogram_kind(kind: str) -> str:
     if normalized not in aliases:
         raise ValueError("spectrogram_kind must be one of: 'mag', 'magnitude', 'power', 'psd'")
     return aliases[normalized]
+
+
+class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
+    """Raw ``(N, 4)`` accel → ``StackedSpectrogramResult`` ``(T, F, C)`` via per-channel NUFFT.
+
+    Each requested channel (x, y, z, mag, jerk) is transformed independently with
+    the same NUFFT parameters, then stacked along the last axis.
+    """
+
+    def __init__(
+        self,
+        secperseg: float,
+        secoverlap: float,
+        target_fs: float = 0.0,
+        detrend: bool = True,
+        spectrogram_kind: str = "magnitude",
+        channels: Optional[List[str]] = None,
+        use_diff: bool = True,
+    ):
+        self.secperseg = secperseg
+        self.secoverlap = secoverlap
+        self.target_fs = target_fs
+        self.detrend = detrend
+        self.spectrogram_kind = _normalize_spectrogram_kind(spectrogram_kind)
+        self.channels = channels
+        self.use_diff = use_diff
+
+    @property
+    def name(self) -> str:
+        ch = self.channels or senpy.STACKED_SPECTROGRAM_CHANNELS
+        return (
+            f"stacked_nufft({self.secperseg}s,"
+            f"channels={ch},kind={self.spectrogram_kind})"
+        )
+
+    def transform(self, X: np.ndarray) -> "senpy.StackedSpectrogramResult":
+        timestamps_raw = np.ascontiguousarray(X[..., 0], dtype=np.float64)
+        median_dt = float(np.median(np.diff(timestamps_raw)))
+        ts_unit = "ms" if median_dt > 10 else "s"
+        conversion = 1e3 if ts_unit == "ms" else 1e6
+        timestamps_us = (timestamps_raw * conversion).astype(np.int64)
+
+        accel = senpy.AccelerometerData(
+            timestamps_us=timestamps_us,
+            x=np.ascontiguousarray(X[..., 1], dtype=np.float64),
+            y=np.ascontiguousarray(X[..., 2], dtype=np.float64),
+            z=np.ascontiguousarray(X[..., 3], dtype=np.float64),
+        )
+        return senpy.compute_stacked_spectrograms(
+            accel=accel,
+            window_s=self.secperseg,
+            overlap_s=self.secoverlap,
+            target_fs=self.target_fs if self.target_fs > 0.0 else None,
+            kind=self.spectrogram_kind,
+            detrend=self.detrend,
+            channels=self.channels,
+            use_diff=self.use_diff,
+        )
+
+
+class RegulariseStackedNUFFTGrid(ProcessingStep):
+    """Snap a ``StackedSpectrogramResult`` to a uniform time grid, filling gaps with the padding value."""
+
+    def __init__(self, hop_seconds: float):
+        self.hop_seconds = hop_seconds
+
+    @property
+    def name(self) -> str:
+        return "regularise_stacked_nufft_grid"
+
+    def transform(
+        self, result: "senpy.StackedSpectrogramResult"
+    ) -> "senpy.StackedSpectrogramResult":
+        times = result.times
+        Sxx = result.Sxx  # (T, F, C)
+        if len(times) == 0:
+            return result
+
+        T, F, C = Sxx.shape
+        t_end = times[-1]
+        hop = self.hop_seconds
+        tol = hop / 2.0
+
+        expected_times = np.arange(0.0, t_end + tol, hop)
+        dense_Sxx = np.full(
+            (len(expected_times), F, C),
+            SPECTROGRAM_PADDING_VALUE,
+            dtype=Sxx.dtype,
+        )
+        for i, t_exp in enumerate(expected_times):
+            dists = np.abs(times - t_exp)
+            j = int(np.argmin(dists))
+            if dists[j] <= tol:
+                dense_Sxx[i] = Sxx[j]
+
+        return senpy.StackedSpectrogramResult(
+            frequencies=result.frequencies,
+            times=expected_times,
+            Sxx=dense_Sxx,
+            channels=result.channels,
+            kind=result.kind,
+        )
+
+
+class ExtractStackedArray(ProcessingStep):
+    """Pull the ``(T, F, C)`` ndarray out of a ``StackedSpectrogramResult``.
+
+    Optionally filters frequencies to ``[fmin, fmax]`` and time-downsamples.
+    """
+
+    def __init__(
+        self,
+        fmin: Optional[float] = None,
+        fmax: Optional[float] = None,
+        time_downsample_rate: int = 1,
+    ):
+        self.fmin = fmin
+        self.fmax = fmax
+        self.time_downsample_rate = int(time_downsample_rate)
+
+    @property
+    def name(self) -> str:
+        return "extract_stacked_array"
+
+    def transform(self, result: "senpy.StackedSpectrogramResult") -> np.ndarray:
+        freq_filter = np.ones(len(result.frequencies), dtype=bool)
+        if self.fmin is not None:
+            freq_filter &= result.frequencies >= self.fmin
+        if self.fmax is not None:
+            freq_filter &= result.frequencies <= self.fmax
+        return result.Sxx[:: self.time_downsample_rate, freq_filter, :]
+
+
+def stacked_nufft_pipeline(
+    secperseg: float,
+    secoverlap: float,
+    target_fs: float = 0.0,
+    channels: Optional[List[str]] = None,
+    feature_kwargs: Optional[dict] = None,
+    use_diff: bool = True,
+    detrend: bool = True,
+    spectrogram_kind: str = "magnitude",
+) -> CompositeStep:
+    """Build: raw ``(N, 4)`` → stacked spectrograms → regularise → ``(T, F, C)`` array."""
+    feature_kwargs = feature_kwargs or {}
+    return CompositeStep(
+        substeps=[
+            ComputeStackedSpectrogramsNUFFT(
+                secperseg=secperseg,
+                secoverlap=secoverlap,
+                target_fs=target_fs,
+                detrend=detrend,
+                spectrogram_kind=spectrogram_kind,
+                channels=channels,
+                use_diff=use_diff,
+            ),
+            RegulariseStackedNUFFTGrid(hop_seconds=secperseg - secoverlap),
+            ExtractStackedArray(
+                fmin=feature_kwargs.get("fmin"),
+                fmax=feature_kwargs.get("fmax"),
+                time_downsample_rate=feature_kwargs.get("time_downsample_rate", 1),
+            ),
+        ]
+    )
 
 
 def nufft_based_features(
