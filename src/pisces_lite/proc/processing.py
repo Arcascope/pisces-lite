@@ -87,7 +87,7 @@ class ComputeSpectrogramNUFFT(ProcessingStep):
             signal=jerk.jerk,
             window_s=self.secperseg,
             overlap_s=self.secoverlap,
-            target_fs=self.target_fs,
+            target_fs=self.target_fs if self.target_fs > 0.0 else None,
             kind=self.spectrogram_kind,
             detrend=self.detrend,
         )
@@ -129,6 +129,8 @@ class RegulariseNUFFTGrid(ProcessingStep):
             frequencies=result.frequencies,
             times=expected_times,
             Sxx=dense_Sxx,
+            kind=result.kind,
+            method=result.method,
         )
 
 
