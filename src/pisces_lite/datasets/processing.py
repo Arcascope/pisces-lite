@@ -28,8 +28,8 @@ from pisces_lite.datasets.constants import (
 
 def _regrid_psg_uniform(
     psg_data: pd.DataFrame,
-    start_time: int,
-    end_time: int,
+    start_time: float,
+    end_time: float,
     timestamp_col: str,
     psg_col: str,
     psg_dt: int,
@@ -48,14 +48,21 @@ def _regrid_psg_uniform(
     """
     if psg_data.empty:
         return psg_data
-    target_timestamps = np.arange(int(start_time), int(end_time) + 1, int(psg_dt),
-                                  dtype=psg_data[timestamp_col].dtype)
+    epoch_count = int(round((float(end_time) - float(start_time)) / float(psg_dt))) + 1
+    target_epoch_idx = np.arange(epoch_count, dtype=np.int64)
+    source = psg_data.copy()
+    source["_psg_epoch_idx"] = np.rint(
+        (source[timestamp_col].astype(float) - float(start_time)) / float(psg_dt)
+    ).astype(np.int64)
     gridded = (
-        psg_data.set_index(timestamp_col)
-        .reindex(target_timestamps)
+        source.set_index("_psg_epoch_idx")
+        .reindex(target_epoch_idx)
         .reset_index()
     )
-    gridded.rename(columns={"index": timestamp_col}, inplace=True)
+    gridded[timestamp_col] = (
+        float(start_time) + gridded["_psg_epoch_idx"].to_numpy(dtype=float) * float(psg_dt)
+    ).astype(psg_data[timestamp_col].dtype)
+    gridded.drop(columns=["_psg_epoch_idx"], inplace=True)
     gridded[psg_col] = gridded[psg_col].fillna(PSG_MASK).astype(int)
     return gridded
 
@@ -108,12 +115,15 @@ def align_trim(
     """
     accelerometer_data = accelerometer_data.sort_values(by=timestamp_col)
     psg_data = psg_data.sort_values(by=timestamp_col)
+    psg_phase = float(psg_data[timestamp_col].iloc[0]) % float(psg_dt)
+    accel_start = accelerometer_data[timestamp_col].iloc[0]
+    accel_end = accelerometer_data[timestamp_col].iloc[-1]
     start_time = max(
-        psg_dt * round(accelerometer_data[timestamp_col].iloc[0] / psg_dt),
+        psg_phase + psg_dt * np.ceil((accel_start - psg_phase) / psg_dt),
         psg_data[timestamp_col].iloc[0],
     )
     end_time = min(
-        psg_dt * round(accelerometer_data[timestamp_col].iloc[-1] / psg_dt),
+        psg_phase + psg_dt * np.floor((accel_end - psg_phase) / psg_dt),
         psg_data[timestamp_col].iloc[-1],
     )
     psg_data = psg_data[
@@ -125,8 +135,8 @@ def align_trim(
     ]
     psg_data = _regrid_psg_uniform(
         psg_data,
-        start_time=int(start_time),
-        end_time=int(end_time),
+        start_time=start_time,
+        end_time=end_time,
         timestamp_col=timestamp_col,
         psg_col=psg_col,
         psg_dt=psg_dt,
