@@ -218,7 +218,7 @@ class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
     def transform(self, X: np.ndarray) -> "senpy.StackedSpectrogramResult":
         timestamps_raw = np.ascontiguousarray(X[..., 0], dtype=np.float64)
         median_dt = float(np.median(np.diff(timestamps_raw)))
-        ts_unit = "ms" if median_dt > 10 else "s"
+        ts_unit = "ms" if median_dt >= 10 else "s"
         conversion = 1e3 if ts_unit == "ms" else 1e6
         timestamps_us = (timestamps_raw * conversion).astype(np.int64)
 
@@ -269,11 +269,15 @@ class RegulariseStackedNUFFTGrid(ProcessingStep):
             SPECTROGRAM_PADDING_VALUE,
             dtype=Sxx.dtype,
         )
-        for i, t_exp in enumerate(expected_times):
-            dists = np.abs(times - t_exp)
-            j = int(np.argmin(dists))
-            if dists[j] <= tol:
-                dense_Sxx[i] = Sxx[j]
+        idx_hi = np.searchsorted(times, expected_times)
+        idx_lo = np.clip(idx_hi - 1, 0, len(times) - 1)
+        idx_hi = np.clip(idx_hi, 0, len(times) - 1)
+        d_lo = np.abs(times[idx_lo] - expected_times)
+        d_hi = np.abs(times[idx_hi] - expected_times)
+        best_idx = np.where(d_lo <= d_hi, idx_lo, idx_hi)
+        best_dist = np.where(d_lo <= d_hi, d_lo, d_hi)
+        mask = best_dist <= tol
+        dense_Sxx[mask] = Sxx[best_idx[mask]]
 
         return senpy.StackedSpectrogramResult(
             frequencies=result.frequencies,

@@ -127,17 +127,14 @@ class ProcessingConfig:
 
         if features.ndim == 3:
             # Per-channel z-normalization for stacked (T, F, C) spectrograms.
-            result = np.empty_like(features)
-            for c in range(features.shape[2]):
-                ch = features[:, :, c]
-                if self.normalization_mode == "znorm_axis1":
-                    mean = np.mean(ch, axis=1, keepdims=True)
-                    std = np.std(ch, axis=1, keepdims=True)
-                else:
-                    mean = np.mean(ch, axis=0, keepdims=True)
-                    std = np.std(ch, axis=0, keepdims=True)
-                result[:, :, c] = (ch - mean) / (std + 1e-7)
-            return result
+            # keepdims broadcasts over T or F; the C axis is normalised independently.
+            if self.normalization_mode == "znorm_axis1":
+                mean = np.mean(features, axis=1, keepdims=True)
+                std = np.std(features, axis=1, keepdims=True)
+            else:
+                mean = np.mean(features, axis=0, keepdims=True)
+                std = np.std(features, axis=0, keepdims=True)
+            return (features - mean) / (std + 1e-7)
 
         if self.normalization_mode == "znorm_axis1":
             norm_axis = 0 if features.shape[1] == 1 else 1
