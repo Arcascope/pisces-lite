@@ -16,6 +16,7 @@ from pisces_lite.datasets import (
     X_COL,
     Y_COL,
     Z_COL,
+    align_trim,
     get_subject_data,
     load_data_sets_from_adapter,
     load_subject,
@@ -204,6 +205,64 @@ def test_load_subject_no_config_noop(tmp_path):
     sd = load_subject(ds, "001")
     assert sd.accel_df[X_COL].iloc[0] == 1.0
     assert list(sd.psg_df[PSG_COL]) == [0, 1, 2, 3]
+
+
+def test_align_trim_regrids_psg_gaps() -> None:
+    accel = pd.DataFrame({
+        TIMESTAMP_COL: np.arange(0.0, 121.0, 1.0),
+        X_COL: np.zeros(121),
+        Y_COL: np.zeros(121),
+        Z_COL: np.ones(121),
+    })
+    psg = pd.DataFrame({
+        TIMESTAMP_COL: [0.0, 30.0, 90.0, 120.0],
+        PSG_COL: [0, 1, 3, 5],
+    })
+
+    _accel_aligned, psg_aligned = align_trim(accel, psg)
+
+    assert list(psg_aligned[TIMESTAMP_COL]) == [0.0, 30.0, 60.0, 90.0, 120.0]
+    assert list(psg_aligned[PSG_COL]) == [0, 1, -1, 3, 5]
+
+
+def test_align_trim_handles_subepoch_psg_cadence() -> None:
+    # PSG scored finer than psg_dt: multiple rows snap to the same epoch.
+    # Must not raise "cannot reindex on an axis with duplicate labels".
+    accel = pd.DataFrame({
+        TIMESTAMP_COL: np.arange(0.0, 121.0, 1.0),
+        X_COL: np.zeros(121),
+        Y_COL: np.zeros(121),
+        Z_COL: np.ones(121),
+    })
+    psg = pd.DataFrame({
+        TIMESTAMP_COL: [0.0, 10.0, 30.0, 60.0, 90.0, 120.0],
+        PSG_COL: [0, 9, 1, 2, 3, 5],
+    })
+
+    _accel_aligned, psg_aligned = align_trim(accel, psg)
+
+    assert list(psg_aligned[TIMESTAMP_COL]) == [0.0, 30.0, 60.0, 90.0, 120.0]
+    # 0.0 and 10.0 both snap to epoch 0; keep="first" wins.
+    assert list(psg_aligned[PSG_COL]) == [0, 1, 2, 3, 5]
+
+
+def test_align_trim_preserves_fractional_psg_phase() -> None:
+    phase = 0.03125
+    accel = pd.DataFrame({
+        TIMESTAMP_COL: np.arange(phase, 120.0 + phase + 1.0, 1.0),
+        X_COL: np.zeros(121),
+        Y_COL: np.zeros(121),
+        Z_COL: np.ones(121),
+    })
+    psg = pd.DataFrame({
+        TIMESTAMP_COL: phase + np.arange(4) * 30.0,
+        PSG_COL: [0, 1, 2, 5],
+    })
+
+    _accel_aligned, psg_aligned = align_trim(accel, psg)
+
+    assert list(psg_aligned[TIMESTAMP_COL]) == pytest.approx(list(psg[TIMESTAMP_COL]))
+    assert list(psg_aligned[PSG_COL]) == [0, 1, 2, 5]
 
 
 def test_space_delimited_csv_via_config(tmp_path):
