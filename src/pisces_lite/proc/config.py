@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -34,6 +34,7 @@ class ProcessingConfig:
     jerk_diff: bool = True
     detrend: bool = True
     spectrogram_kind: str = "magnitude"
+    spectral_channels: Optional[List[str]] = None
 
     @classmethod
     def from_json(cls, path: "Path | str") -> "ProcessingConfig":
@@ -71,19 +72,36 @@ class ProcessingConfig:
             raise NotImplementedError(
                 f"pisces_lite.proc only vendors the 'nufft' pipeline; got type={self.type!r}."
             )
-        from pisces_lite.proc.processing import nufft_based_features
 
         secoverlap = self.window_seconds - self.window_step_seconds
+        feature_kwargs = {
+            "fmin": self.fmin,
+            "fmax": self.fmax,
+            "time_downsample_rate": self.time_downsample_rate,
+        }
+
+        if self.spectral_channels is not None:
+            from pisces_lite.proc.processing import stacked_nufft_pipeline
+
+            return stacked_nufft_pipeline(
+                secperseg=self.window_seconds,
+                secoverlap=secoverlap,
+                target_fs=self.fs,
+                channels=self.spectral_channels,
+                feature_kwargs=feature_kwargs,
+                use_diff=self.jerk_diff,
+                detrend=self.detrend,
+                spectrogram_kind=self.spectrogram_kind,
+            )
+
+        from pisces_lite.proc.processing import nufft_based_features
+
         return nufft_based_features(
             secperseg=self.window_seconds,
             secoverlap=secoverlap,
             features=["spectrogram"],
             target_fs=self.fs,
-            feature_kwargs={
-                "fmin": self.fmin,
-                "fmax": self.fmax,
-                "time_downsample_rate": self.time_downsample_rate,
-            },
+            feature_kwargs=feature_kwargs,
             use_diff=self.jerk_diff,
             detrend=self.detrend,
             spectrogram_kind=self.spectrogram_kind,
@@ -107,22 +125,45 @@ class ProcessingConfig:
         if self.normalization_mode == "none":
             return features
 
+        if features.ndim == 3:
+            # Per-channel z-normalization for stacked (T, F, C) spectrograms.
+            # keepdims broadcasts over T or F; the C axis is normalised independently.
+            if self.normalization_mode == "znorm_axis1":
+                mean = np.mean(features, axis=1, keepdims=True)
+                denom = np.std(features, axis=1, keepdims=True)
+            elif data_set_name is not None:
+                # Per-channel scalar stats, stored shape (C,) -> broadcast (1, 1, C).
+                mean, denom = self._lookup_stats(data_set_name)
+                mean = mean.reshape(1, 1, -1)
+                denom = denom.reshape(1, 1, -1)
+            else:
+                # Per-channel scalar self-stats: reduce over both T and F.
+                mean = np.mean(features, axis=(0, 1), keepdims=True)
+                denom = np.std(features, axis=(0, 1), keepdims=True)
+            return (features - mean) / (denom + 1e-7)
+
         if self.normalization_mode == "znorm_axis1":
             norm_axis = 0 if features.shape[1] == 1 else 1
             mean = np.mean(features, axis=norm_axis, keepdims=True)
-            std = np.std(features, axis=norm_axis, keepdims=True)
-            return (features - mean) / (std + 1e-7)
+            denom = np.std(features, axis=norm_axis, keepdims=True)
+            return (features - mean) / (denom + 1e-7)
 
         if data_set_name is not None:
-            if self.norm_stats is None or data_set_name not in self.norm_stats:
-                raise RuntimeError(
-                    f"No normalization stats for dataset {data_set_name!r}."
-                )
-            mean = np.array(self.norm_stats[data_set_name]["mean"])
-            std = np.array(self.norm_stats[data_set_name]["std"])
+            mean, denom = self._lookup_stats(data_set_name)
         else:
-            mean, std = self._compute_stats(features)
-        return (features - mean) / (std + 1e-7)
+            mean, denom = self._compute_stats(features)
+        return (features - mean) / (denom + 1e-7)
+
+    def _lookup_stats(self, data_set_name: str) -> Tuple[np.ndarray, np.ndarray]:
+        """Load saved (mean, denom) for a dataset, tolerating the legacy ``std`` key."""
+        if self.norm_stats is None or data_set_name not in self.norm_stats:
+            raise RuntimeError(
+                f"No normalization stats for dataset {data_set_name!r}."
+            )
+        stats = self.norm_stats[data_set_name]
+        mean = np.array(stats["mean"])
+        denom = np.array(stats["denom"] if "denom" in stats else stats["std"])
+        return mean, denom
 
     def _compute_stats(self, all_X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         region = all_X[:, self.feature_index] < self.normalize_below
@@ -130,10 +171,10 @@ class ProcessingConfig:
             region = np.ones(len(all_X), dtype=bool)
         mean = np.mean(all_X[region], axis=0)
         if self.normalization_mode == "original_norm":
-            std = np.mean(all_X[region], axis=0)
+            denom = np.mean(all_X[region], axis=0)
         else:
-            std = np.std(all_X[region], axis=0)
-        return mean, std
+            denom = np.std(all_X[region], axis=0)
+        return mean,denom 
 
     def apply(
         self,
