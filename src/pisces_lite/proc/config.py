@@ -130,28 +130,40 @@ class ProcessingConfig:
             # keepdims broadcasts over T or F; the C axis is normalised independently.
             if self.normalization_mode == "znorm_axis1":
                 mean = np.mean(features, axis=1, keepdims=True)
-                std = np.std(features, axis=1, keepdims=True)
+                denom = np.std(features, axis=1, keepdims=True)
+            elif data_set_name is not None:
+                # Per-channel scalar stats, stored shape (C,) -> broadcast (1, 1, C).
+                mean, denom = self._lookup_stats(data_set_name)
+                mean = mean.reshape(1, 1, -1)
+                denom = denom.reshape(1, 1, -1)
             else:
-                mean = np.mean(features, axis=0, keepdims=True)
-                std = np.std(features, axis=0, keepdims=True)
-            return (features - mean) / (std + 1e-7)
+                # Per-channel scalar self-stats: reduce over both T and F.
+                mean = np.mean(features, axis=(0, 1), keepdims=True)
+                denom = np.std(features, axis=(0, 1), keepdims=True)
+            return (features - mean) / (denom + 1e-7)
 
         if self.normalization_mode == "znorm_axis1":
             norm_axis = 0 if features.shape[1] == 1 else 1
             mean = np.mean(features, axis=norm_axis, keepdims=True)
-            std = np.std(features, axis=norm_axis, keepdims=True)
-            return (features - mean) / (std + 1e-7)
+            denom = np.std(features, axis=norm_axis, keepdims=True)
+            return (features - mean) / (denom + 1e-7)
 
         if data_set_name is not None:
-            if self.norm_stats is None or data_set_name not in self.norm_stats:
-                raise RuntimeError(
-                    f"No normalization stats for dataset {data_set_name!r}."
-                )
-            mean = np.array(self.norm_stats[data_set_name]["mean"])
-            std = np.array(self.norm_stats[data_set_name]["std"])
+            mean, denom = self._lookup_stats(data_set_name)
         else:
-            mean, std = self._compute_stats(features)
-        return (features - mean) / (std + 1e-7)
+            mean, denom = self._compute_stats(features)
+        return (features - mean) / (denom + 1e-7)
+
+    def _lookup_stats(self, data_set_name: str) -> Tuple[np.ndarray, np.ndarray]:
+        """Load saved (mean, denom) for a dataset, tolerating the legacy ``std`` key."""
+        if self.norm_stats is None or data_set_name not in self.norm_stats:
+            raise RuntimeError(
+                f"No normalization stats for dataset {data_set_name!r}."
+            )
+        stats = self.norm_stats[data_set_name]
+        mean = np.array(stats["mean"])
+        denom = np.array(stats["denom"] if "denom" in stats else stats["std"])
+        return mean, denom
 
     def _compute_stats(self, all_X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         region = all_X[:, self.feature_index] < self.normalize_below
@@ -159,10 +171,10 @@ class ProcessingConfig:
             region = np.ones(len(all_X), dtype=bool)
         mean = np.mean(all_X[region], axis=0)
         if self.normalization_mode == "original_norm":
-            std = np.mean(all_X[region], axis=0)
+            denom = np.mean(all_X[region], axis=0)
         else:
-            std = np.std(all_X[region], axis=0)
-        return mean, std
+            denom = np.std(all_X[region], axis=0)
+        return mean,denom 
 
     def apply(
         self,

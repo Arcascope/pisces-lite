@@ -54,6 +54,9 @@ def _regrid_psg_uniform(
     source["_psg_epoch_idx"] = np.rint(
         (source[timestamp_col].astype(float) - float(start_time)) / float(psg_dt)
     ).astype(np.int64)
+    # Several PSG rows can snap to the same epoch when scored finer than psg_dt
+    # (or with jittered timestamps); keep the first so reindex sees unique labels.
+    source = source.drop_duplicates(subset="_psg_epoch_idx", keep="first")
     gridded = (
         source.set_index("_psg_epoch_idx")
         .reindex(target_epoch_idx)

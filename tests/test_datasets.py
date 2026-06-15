@@ -225,6 +225,27 @@ def test_align_trim_regrids_psg_gaps() -> None:
     assert list(psg_aligned[PSG_COL]) == [0, 1, -1, 3, 5]
 
 
+def test_align_trim_handles_subepoch_psg_cadence() -> None:
+    # PSG scored finer than psg_dt: multiple rows snap to the same epoch.
+    # Must not raise "cannot reindex on an axis with duplicate labels".
+    accel = pd.DataFrame({
+        TIMESTAMP_COL: np.arange(0.0, 121.0, 1.0),
+        X_COL: np.zeros(121),
+        Y_COL: np.zeros(121),
+        Z_COL: np.ones(121),
+    })
+    psg = pd.DataFrame({
+        TIMESTAMP_COL: [0.0, 10.0, 30.0, 60.0, 90.0, 120.0],
+        PSG_COL: [0, 9, 1, 2, 3, 5],
+    })
+
+    _accel_aligned, psg_aligned = align_trim(accel, psg)
+
+    assert list(psg_aligned[TIMESTAMP_COL]) == [0.0, 30.0, 60.0, 90.0, 120.0]
+    # 0.0 and 10.0 both snap to epoch 0; keep="first" wins.
+    assert list(psg_aligned[PSG_COL]) == [0, 1, 2, 3, 5]
+
+
 def test_align_trim_preserves_fractional_psg_phase() -> None:
     phase = 0.03125
     accel = pd.DataFrame({
