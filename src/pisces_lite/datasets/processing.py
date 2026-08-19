@@ -155,22 +155,36 @@ def mask_data(
     minimum_accel_samples_per_psg: int = MINIMUM_ACCEL_SAMPLES_PER_PSG,
     psg_col: str = PSG_COL,
     mask_value: int = -2,
-    extra_mask_minutes: float = 1.5,
+    extra_mask_minutes: float = 0.0,
 ) -> pd.DataFrame:
     """Mark PSG epochs with insufficient accelerometer coverage as ``mask_value``.
 
-    Expands each flagged epoch by ``extra_mask_minutes`` before and after.
+    Only the epochs that actually lack coverage are marked. ``extra_mask_minutes``
+    optionally dilates each flagged epoch by that many minutes on either side; it
+    defaults to 0 so the mask stays a faithful record of where accel data is
+    missing instead of manufacturing gap labels around every short dropout.
+
+    Coverage is evaluated against the original accelerometer data for every
+    epoch before anything is written, so masked epochs can never trigger
+    further masking.
     """
-    for tidx, psg_time in enumerate(psg_data[timestamp_col]):
-        accel_window = accelerometer_data[
-            (accelerometer_data[timestamp_col] >= psg_time)
-            & (accelerometer_data[timestamp_col] < psg_time + psg_dt)
-        ]
-        if len(accel_window) < minimum_accel_samples_per_psg:
-            extra_mask_idx = int(extra_mask_minutes * 60 // psg_dt)
-            start = max(0, tidx - extra_mask_idx)
-            end = min(len(psg_data) - 1, tidx + extra_mask_idx)
-            psg_data.loc[start:end, psg_col] = mask_value
+    if psg_data.empty:
+        return psg_data
+    epoch_starts = psg_data[timestamp_col].to_numpy(dtype=float)
+    accel_times = np.sort(accelerometer_data[timestamp_col].to_numpy(dtype=float))
+    counts = np.searchsorted(
+        accel_times, epoch_starts + float(psg_dt), side="left"
+    ) - np.searchsorted(accel_times, epoch_starts, side="left")
+    flagged = counts < minimum_accel_samples_per_psg
+    extra_mask_idx = int(extra_mask_minutes * 60 // psg_dt)
+    if extra_mask_idx > 0:
+        dilated = flagged.copy()
+        for tidx in np.flatnonzero(flagged):
+            start = max(0, int(tidx) - extra_mask_idx)
+            end = min(len(flagged), int(tidx) + extra_mask_idx + 1)
+            dilated[start:end] = True
+        flagged = dilated
+    psg_data.loc[flagged, psg_col] = mask_value
     return psg_data
 
 
