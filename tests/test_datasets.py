@@ -20,6 +20,7 @@ from pisces_lite.datasets import (
     get_subject_data,
     load_data_sets_from_adapter,
     load_subject,
+    mask_data,
 )
 
 
@@ -263,6 +264,50 @@ def test_align_trim_preserves_fractional_psg_phase() -> None:
 
     assert list(psg_aligned[TIMESTAMP_COL]) == pytest.approx(list(psg[TIMESTAMP_COL]))
     assert list(psg_aligned[PSG_COL]) == [0, 1, 2, 5]
+
+
+def _coverage_frames(missing_epochs: list[int], n_epochs: int = 12):
+    """PSG on a 30 s grid plus 50 Hz accel with whole epochs dropped out."""
+    psg = pd.DataFrame({
+        TIMESTAMP_COL: np.arange(n_epochs, dtype=float) * 30.0,
+        PSG_COL: np.ones(n_epochs, dtype=int),
+    })
+    times = np.arange(0.0, n_epochs * 30.0, 0.02)
+    keep = ~np.isin((times // 30.0).astype(int), missing_epochs)
+    accel = pd.DataFrame({
+        TIMESTAMP_COL: times[keep],
+        X_COL: np.zeros(keep.sum()),
+        Y_COL: np.zeros(keep.sum()),
+        Z_COL: np.ones(keep.sum()),
+    })
+    return accel, psg
+
+
+def test_mask_data_masks_only_uncovered_epochs() -> None:
+    accel, psg = _coverage_frames([5])
+
+    masked = mask_data(accel, psg)
+
+    assert list(np.flatnonzero(masked[PSG_COL].to_numpy() == -2)) == [5]
+    assert (masked[PSG_COL].to_numpy() != -1).all()
+
+
+def test_mask_data_does_not_dilate_by_default() -> None:
+    # Two dropouts 3 epochs apart: under the old +/-1.5 min rule their
+    # expansions merged and swallowed everything in between.
+    accel, psg = _coverage_frames([4, 7])
+
+    masked = mask_data(accel, psg)
+
+    assert list(np.flatnonzero(masked[PSG_COL].to_numpy() == -2)) == [4, 7]
+
+
+def test_mask_data_dilates_when_asked() -> None:
+    accel, psg = _coverage_frames([5])
+
+    masked = mask_data(accel, psg, extra_mask_minutes=1.0)
+
+    assert list(np.flatnonzero(masked[PSG_COL].to_numpy() == -2)) == [3, 4, 5, 6, 7]
 
 
 def test_space_delimited_csv_via_config(tmp_path):
