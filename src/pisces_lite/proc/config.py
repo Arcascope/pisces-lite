@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -35,6 +35,8 @@ class ProcessingConfig:
     detrend: bool = True
     spectrogram_kind: str = "magnitude"
     spectral_channels: Optional[List[str]] = None
+    nufft_backend: str = "streaming"
+    nufft_backend_kwargs: Dict[str, object] = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, path: "Path | str") -> "ProcessingConfig":
@@ -49,6 +51,10 @@ class ProcessingConfig:
         for alias in ("spectrogram_mode", "stft_mode", "stft_kind", "kind", "mode"):
             if alias in d and "spectrogram_kind" not in d:
                 d["spectrogram_kind"] = d.pop(alias)
+        if "backend" in d and "nufft_backend" not in d:
+            d["nufft_backend"] = d.pop("backend")
+        if "backend_kwargs" in d and "nufft_backend_kwargs" not in d:
+            d["nufft_backend_kwargs"] = d.pop("backend_kwargs")
         known = {f for f in cls.__dataclass_fields__}
         return cls(**{k: v for k, v in d.items() if k in known})
 
@@ -92,6 +98,8 @@ class ProcessingConfig:
                 use_diff=self.jerk_diff,
                 detrend=self.detrend,
                 spectrogram_kind=self.spectrogram_kind,
+                nufft_backend=self.nufft_backend,
+                nufft_backend_kwargs=self.nufft_backend_kwargs,
             )
 
         from pisces_lite.proc.processing import nufft_based_features
@@ -105,6 +113,8 @@ class ProcessingConfig:
             use_diff=self.jerk_diff,
             detrend=self.detrend,
             spectrogram_kind=self.spectrogram_kind,
+            nufft_backend=self.nufft_backend,
+            nufft_backend_kwargs=self.nufft_backend_kwargs,
         )
 
     def extract_features(self, accel: np.ndarray) -> np.ndarray:
@@ -113,6 +123,17 @@ class ProcessingConfig:
         if features.ndim == 1:
             features = features[:, np.newaxis]
         return features
+
+    def extract_features_many(
+        self, accel_arrays: Sequence[np.ndarray]
+    ) -> List[np.ndarray]:
+        """Extract several recordings, allowing accelerator backends to pack work."""
+        pipeline = self._build_pipeline()
+        features_many = pipeline.transform_many(list(accel_arrays))
+        return [
+            features[:, np.newaxis] if features.ndim == 1 else features
+            for features in features_many
+        ]
 
     def normalize(
         self,
@@ -191,3 +212,36 @@ class ProcessingConfig:
                 "padding=True was part of training; inference path does not pad."
             )
         return features
+
+    def apply_many(
+        self,
+        accel_arrays: Sequence[np.ndarray],
+        data_set_names: Optional[Sequence[Optional[str]]] = None,
+        normalize: bool = True,
+        padding: bool = False,
+    ) -> List[np.ndarray]:
+        """Apply one config to several recordings without changing their order.
+
+        Accelerator-backed pipeline steps may override ``transform_many`` to
+        pack work across recordings. CPU-backed steps retain the established
+        per-recording path.
+        """
+        accel_arrays = list(accel_arrays)
+        if data_set_names is None:
+            data_set_names = [None] * len(accel_arrays)
+        else:
+            data_set_names = list(data_set_names)
+            if len(data_set_names) != len(accel_arrays):
+                raise ValueError("data_set_names must match accel_arrays length")
+        if padding:
+            raise NotImplementedError(
+                "padding=True was part of training; inference path does not pad."
+            )
+
+        features_many = self.extract_features_many(accel_arrays)
+        if normalize:
+            return [
+                self.normalize(features, data_set_name=data_set_name)
+                for features, data_set_name in zip(features_many, data_set_names)
+            ]
+        return features_many

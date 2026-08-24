@@ -8,7 +8,7 @@ version = "1.3.1"
 description = "ML-backend-agnostic core for the pisces2 work: preprocessing, metrics logging, ROC/AUROC analysis, plotting. No TensorFlow/Keras/YDF/JAX dependencies."
 requires-python = ">=3.10"
 dependencies = [
-    "senpy @ git+https://github.com/Arcascope/sensor_preprocessing_cpp.git@2.0.0#subdirectory=senpy",
+    "senpy @ git+https://github.com/Arcascope/sensor_preprocessing_cpp.git@a53cd436c4b82aff1c983c1f739ffbb0ca101080#subdirectory=senpy",
     "matplotlib",
     "numpy",
     "scipy",
@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+jax = ["jax-finufft>=1.3.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

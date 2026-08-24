@@ -36,6 +36,135 @@ def test_stacked_spectrogram_pipeline_shape():
     assert F > 0
 
 
+def test_stacked_spectrogram_cpu_backend_remains_available():
+    accel = _make_accel_array()
+    pipeline = stacked_nufft_pipeline(
+        secperseg=30.0,
+        secoverlap=0.0,
+        target_fs=16.0,
+        channels=["mag", "jerk"],
+        nufft_backend="cpu",
+    )
+
+    result = pipeline.transform(accel)
+
+    assert result.ndim == 3
+    assert result.shape[2] == 2
+
+
+def test_stacked_jax_backend_uses_senpy_packed_windows(monkeypatch):
+    from senpy import jax_backend as senpy_jax
+
+    calls = []
+
+    def fake_window_batch(points, signals, valid, *, nfft_padded, median_fs, **kwargs):
+        calls.append((points.shape, signals.shape, valid.shape, kwargs))
+        shape = (points.shape[0], 3, nfft_padded // 2 + 1)
+        return np.ones(shape, dtype=np.complex64)
+
+    monkeypatch.setattr(senpy_jax, "compute_nustft_window_batch", fake_window_batch)
+    pipeline = stacked_nufft_pipeline(
+        secperseg=2.0,
+        secoverlap=1.0,
+        target_fs=4.0,
+        channels=["x", "mag"],
+        nufft_backend="jax",
+        nufft_backend_kwargs={"batch_size": 8, "eps": 1e-5},
+    )
+
+    result = pipeline.transform(_make_accel_array(n_seconds=8.0, fs=4.0))
+
+    assert calls
+    assert result.ndim == 3
+    assert result.shape[2] == 2
+    assert np.all(result[1:] == 1.0)
+
+
+def test_stacked_jax_apply_many_packs_windows_across_recordings(monkeypatch):
+    from senpy import jax_backend as senpy_jax
+
+    original_pack = senpy_jax.pack_nustft_window_batches
+    packed_recording_counts = []
+
+    def recording_pack(recordings, **kwargs):
+        packed_recording_counts.append(len(recordings))
+        return original_pack(recordings, **kwargs)
+
+    def fake_window_batch(points, signals, valid, *, nfft_padded, median_fs, **kwargs):
+        shape = (points.shape[0], 3, nfft_padded // 2 + 1)
+        return np.ones(shape, dtype=np.complex64)
+
+    monkeypatch.setattr(senpy_jax, "pack_nustft_window_batches", recording_pack)
+    monkeypatch.setattr(senpy_jax, "compute_nustft_window_batch", fake_window_batch)
+    cfg = ProcessingConfig.from_dict(
+        {
+            "type": "nufft",
+            "fs": 4.0,
+            "window_seconds": 2,
+            "window_step_seconds": 1,
+            "fmax": 2.0,
+            "spectral_channels": ["x", "mag"],
+            "normalization_mode": "none",
+            "nufft_backend": "jax",
+            "nufft_backend_kwargs": {"batch_size": 16},
+        }
+    )
+
+    results = cfg.apply_many(
+        [
+            _make_accel_array(n_seconds=8.0, fs=4.0),
+            _make_accel_array(n_seconds=9.0, fs=4.0),
+        ],
+        normalize=False,
+    )
+
+    assert packed_recording_counts == [2]
+    assert len(results) == 2
+    assert all(result.ndim == 3 and result.shape[2] == 2 for result in results)
+
+
+def test_jerk_jax_apply_many_packs_windows_across_recordings(monkeypatch):
+    from senpy import jax_backend as senpy_jax
+
+    original_pack = senpy_jax.pack_nustft_window_batches
+    packed_recording_counts = []
+
+    def recording_pack(recordings, **kwargs):
+        packed_recording_counts.append(len(recordings))
+        return original_pack(recordings, **kwargs)
+
+    def fake_window_batch(points, signals, valid, *, nfft_padded, median_fs, **kwargs):
+        shape = (points.shape[0], 3, nfft_padded // 2 + 1)
+        return np.ones(shape, dtype=np.complex64)
+
+    monkeypatch.setattr(senpy_jax, "pack_nustft_window_batches", recording_pack)
+    monkeypatch.setattr(senpy_jax, "compute_nustft_window_batch", fake_window_batch)
+    cfg = ProcessingConfig.from_dict(
+        {
+            "type": "nufft",
+            "fs": 4.0,
+            "window_seconds": 2,
+            "window_step_seconds": 1,
+            "fmax": 2.0,
+            "normalization_mode": "none",
+            "nufft_backend": "jax",
+            "nufft_backend_kwargs": {"batch_size": 16},
+        }
+    )
+
+    results = cfg.apply_many(
+        [
+            _make_accel_array(n_seconds=8.0, fs=4.0),
+            _make_accel_array(n_seconds=9.0, fs=4.0),
+        ],
+        normalize=False,
+    )
+
+    assert packed_recording_counts == [2]
+    assert len(results) == 2
+    assert all(result.ndim == 2 for result in results)
+
+
 def test_processing_config_spectral_channels_produces_3d_output():
     cfg = ProcessingConfig.from_dict({
         "type": "nufft",
