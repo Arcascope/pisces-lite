@@ -239,10 +239,39 @@ class CompositeStep(ProcessingStep):
 
 def _normalize_spectrogram_kind(kind: str) -> str:
     normalized = str(kind).replace("-", "_").lower()
-    aliases = {"mag": "magnitude", "magnitude": "magnitude", "power": "power", "psd": "psd"}
+    aliases = {
+        "mag": "magnitude",
+        "magnitude": "magnitude",
+        "power": "power",
+        "psd": "psd",
+        "log_psd": "log_psd",
+    }
     if normalized not in aliases:
-        raise ValueError("spectrogram_kind must be one of: 'mag', 'magnitude', 'power', 'psd'")
+        raise ValueError(
+            "spectrogram_kind must be one of: 'mag', 'magnitude', 'power', 'psd', 'log_psd'"
+        )
     return aliases[normalized]
+
+
+# log(PSD + eps) uses the float64 machine epsilon, matching the log-power
+# spectrograms of Olsen et al. 2022 (SleepStagePrediction), whose code adds
+# sys.float_info.epsilon before the log.
+_LOG_PSD_EPSILON = float(np.finfo(np.float64).eps)
+
+
+def _senpy_kind(kind: str) -> str:
+    """The kind to request from senpy; 'log_psd' is derived from 'psd' here."""
+    return "psd" if kind == "log_psd" else kind
+
+
+def _log_psd_spectrogram(result: "senpy.SpectrogramResult") -> "senpy.SpectrogramResult":
+    return senpy.SpectrogramResult(
+        frequencies=result.frequencies,
+        times=result.times,
+        Sxx=np.log(result.Sxx + _LOG_PSD_EPSILON),
+        kind="log_psd",
+        method=result.method,
+    )
 
 
 def _normalize_nufft_backend(backend: str) -> str:
@@ -290,15 +319,16 @@ def _compute_nufft_spectrogram(
     backend = _normalize_nufft_backend(backend)
     if backend == "cpu":
         _take_backend_kwargs(backend, backend_kwargs, ())
-        return senpy.compute_nufft_spectrogram(
+        result = senpy.compute_nufft_spectrogram(
             timestamps=timestamps,
             signal=signal,
             window_s=window_s,
             overlap_s=overlap_s,
             target_fs=target_fs,
-            kind=kind,
+            kind=_senpy_kind(kind),
             detrend=detrend,
         )
+        return _log_psd_spectrogram(result) if kind == "log_psd" else result
     if backend == "streaming":
         kwargs = _take_backend_kwargs(
             backend, backend_kwargs, ("subwindow_s", "chunk")
@@ -319,7 +349,8 @@ def _compute_nufft_spectrogram(
             detrend=detrend,
             **kwargs,
         )
-        return result.spectrogram(kind)
+        spectrogram = result.spectrogram(_senpy_kind(kind))
+        return _log_psd_spectrogram(spectrogram) if kind == "log_psd" else spectrogram
 
     return _compute_packed_jax_spectrograms(
         timestamps=timestamps,
@@ -335,7 +366,12 @@ def _compute_nufft_spectrogram(
 
 def _spectral_surface(coefficients: np.ndarray, kind: str) -> np.ndarray:
     magnitude = np.abs(coefficients)
-    return magnitude if kind == "magnitude" else magnitude * magnitude
+    if kind == "magnitude":
+        return magnitude
+    power = magnitude * magnitude
+    if kind == "log_psd":
+        return np.log(power + _LOG_PSD_EPSILON)
+    return power
 
 
 def _compute_packed_jax_spectrograms(
@@ -504,16 +540,25 @@ class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
     def transform(self, X: np.ndarray) -> "senpy.StackedSpectrogramResult":
         if self.nufft_backend == "cpu":
             _take_backend_kwargs("cpu", self.nufft_backend_kwargs, ())
-            return senpy.compute_stacked_spectrograms(
+            stacked = senpy.compute_stacked_spectrograms(
                 accel=self._prepare_accelerometer(X),
                 window_s=self.secperseg,
                 overlap_s=self.secoverlap,
                 target_fs=self.target_fs if self.target_fs > 0.0 else None,
-                kind=self.spectrogram_kind,
+                kind=_senpy_kind(self.spectrogram_kind),
                 detrend=self.detrend,
                 channels=self.channels,
                 use_diff=self.use_diff,
             )
+            if self.spectrogram_kind == "log_psd":
+                stacked = senpy.StackedSpectrogramResult(
+                    frequencies=stacked.frequencies,
+                    times=stacked.times,
+                    Sxx=np.log(stacked.Sxx + _LOG_PSD_EPSILON),
+                    channels=stacked.channels,
+                    kind="log_psd",
+                )
+            return stacked
         timestamps, signals, channels = self._prepare_signals(X)
         target_fs = self.target_fs if self.target_fs > 0.0 else None
         if self.nufft_backend == "jax":
