@@ -13,9 +13,9 @@ from typing import List, Optional
 import numpy as np
 
 from pisces_lite.datasets.constants import (
-    PSG_MAPPING_WLDR,
-    PSG_MAPPING_WNR,
-    PSG_MAPPING_WS,
+    PSG_5C_MAPPING_TO_WLDR,
+    PSG_5C_MAPPING_TO_WNR,
+    PSG_5C_MAPPING_TO_WS,
 )
 
 
@@ -103,9 +103,9 @@ class ModelIOBundle:
     def y_for_n_classes(self, num_classes: int) -> np.ndarray:
         """Return ``self.y`` remapped into ``num_classes`` sleep stages."""
         mapping = {
-            2: PSG_MAPPING_WS,
-            3: PSG_MAPPING_WNR,
-            4: PSG_MAPPING_WLDR,
+            2: PSG_5C_MAPPING_TO_WS,
+            3: PSG_5C_MAPPING_TO_WNR,
+            4: PSG_5C_MAPPING_TO_WLDR,
         }.get(num_classes, {})
         if not mapping:
             return self.y

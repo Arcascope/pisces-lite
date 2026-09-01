@@ -20,6 +20,7 @@ ACC_HZ = 50  # expected accelerometer sampling rate (default)
 END_HZ = 32  # resampled accelerometer sampling rate
 MINIMUM_ACCEL_SAMPLES_PER_PSG = END_HZ
 
+PAD_CLASS_LABEL = -2
 PSG_MASK = -1
 SLEEP_CLASS_LABEL = 1
 WAKE_CLASS_LABEL = 0
@@ -29,6 +30,13 @@ MINUTES_TO_SECONDS = 60
 
 # ---- legacy PSG mapping presets (kept so existing configs can reference them)
 
+# These map from the CSV to the internal "5C" five class represenation:
+# 0 = Wake
+# 1 = N1
+# 2 = N2
+# 3 = N3
+# (4 = N4) scientifically deprecated
+# 5 = REM
 PSG_MAPPING_DREAMT = {
     "Missing": PSG_MASK,
     "P": 0,
@@ -68,7 +76,34 @@ PSG_MAPPING_5C = {
     5: 5
 }
 
+# Partial inverses to the WLDR/WNR/WS class problems
+# We pick the smallest 5C class that maps back to 
+# 0(wake)/1(light)/2(deep)/3(REM)
+# 0(wake)/1(nrem)/2(REM)
+# 0(wake)/1(sleep)
 PSG_MAPPING_WLDR = {
+    PAD_CLASS_LABEL: PAD_CLASS_LABEL,
+    PSG_MASK: PSG_MASK,
+    0: 0,
+    1: 1, # Light -> N1
+    2: 3, # Deep -> N3
+    3: 5, # REM -> REM
+}
+PSG_MAPPING_WNR = {
+    PAD_CLASS_LABEL: PAD_CLASS_LABEL,
+    PSG_MASK: PSG_MASK,
+    0: 0,
+    1: 1, # NREM -> N1
+    2: 5, # REM -> REM
+}
+PSG_MAPPING_WS = {
+    PAD_CLASS_LABEL: PAD_CLASS_LABEL,
+    PSG_MASK: PSG_MASK,
+    0: 0,
+    1: 1, # Sleep -> N1
+}
+
+PSG_5C_MAPPING_TO_WLDR = {
     PSG_MASK: PSG_MASK,
     0: 0,
     1: 1,
@@ -78,7 +113,7 @@ PSG_MAPPING_WLDR = {
     5: 3,
 }
 
-PSG_MAPPING_WNR = {
+PSG_5C_MAPPING_TO_WNR = {
     PSG_MASK: PSG_MASK,
     0: 0,
     1: 1,
@@ -88,7 +123,7 @@ PSG_MAPPING_WNR = {
     5: 2,
 }
 
-PSG_MAPPING_WS = {
+PSG_5C_MAPPING_TO_WS = {
     PSG_MASK: PSG_MASK,
     0: 0,
     1: 1,
