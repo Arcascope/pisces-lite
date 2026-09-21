@@ -76,21 +76,21 @@ def min_stage_minutes(ctx: EvalContext) -> float:
     return float(ctx.extra.get("min_stage_minutes", 5.0))
 
 
-def off_wrist_class_indices(ctx: EvalContext | None) -> set[int]:
+def gap_class_indices(ctx: EvalContext | None) -> set[int]:
     if ctx is None:
         return set()
     names = ctx.extra.get("class_names") or []
     return {
         idx
         for idx, name in enumerate(names)
-        if str(name).lower().replace("-", "_") in {"off_wrist", "offwrist"}
+        if str(name).lower().replace("-", "_") in {"gap", "offwrist"}
     }
 
 
 def sleep_mask(labels: np.ndarray, ctx: EvalContext | None = None) -> np.ndarray:
     labels_arr = np.asarray(labels)
     mask = labels_arr > 0
-    for class_idx in off_wrist_class_indices(ctx):
+    for class_idx in gap_class_indices(ctx):
         mask = mask & (labels_arr != class_idx)
     return mask
 
