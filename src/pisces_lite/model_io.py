@@ -113,7 +113,7 @@ class ModelIOBundle:
 
 
 def get_features_cache_name(dataset_name: str, subject_id: Optional[str]) -> str:
-    """``{dataset}[_subject_{id}]_features.npz`` (matches pisces2 layout)."""
+    """``{dataset}[_subject_{id}]_features.npz``"""
     base = dataset_name if subject_id is None else f"{dataset_name}_subject_{subject_id}"
     return f"{base}_features.npz"
 
@@ -121,12 +121,19 @@ def get_features_cache_name(dataset_name: str, subject_id: Optional[str]) -> str
 def resolve_feature_cache_dir(
     processing_config,
     feature_cache_dir: "Path | str | None",
+    cache_prefix: str | None = None,
 ) -> Optional[Path]:
-    """``{feature_cache_dir}/{type}/{fs}Hz/`` — the per-run cache directory.
+    """``{feature_cache_dir}/{cache_prefix}/`` — the per-run cache directory.
+    If `cache_prefix` is `None`, defaults to `{type}/{fs}Hz`.
 
-    Matches pisces2's layout so pre-existing NPZ caches keep hitting.
     Returns ``None`` when ``feature_cache_dir`` is ``None``.
     """
     if feature_cache_dir is None:
         return None
-    return Path(feature_cache_dir) / processing_config.type / f"{processing_config.fs}Hz"
+    out_path = Path(feature_cache_dir) / (
+        cache_prefix if cache_prefix is not None 
+        else processing_config.type / f"{processing_config.fs}Hz"
+    )
+
+    return out_path
+

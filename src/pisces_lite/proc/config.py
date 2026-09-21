@@ -1,9 +1,4 @@
-"""Vendored subset of pisces2.configuration.processing_configuration.ProcessingConfig.
-
-Only the inference path (``apply`` / ``extract_features`` / ``normalize``) is
-preserved. Training-only entry points (``fit_transform`` / ``transform``)
-are intentionally omitted — they depended on pisces2.utils and are not used
-by the inference path.
+"""Configuration for processing triaxial accelerometer (+PSG) into timestamp aligned spectrograms, with optional PSG.
 """
 from __future__ import annotations
 

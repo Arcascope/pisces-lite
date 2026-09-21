@@ -1,4 +1,4 @@
-"""NUFFT spectrogram pipeline classes, vendored from pisces2.processing.
+"""NUFFT spectrogram pipeline classes.
 
 Only the classes reachable from ``ProcessingConfig._build_pipeline`` for
 ``type="nufft"`` are present. No keras/sklearn/model imports.

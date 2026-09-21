@@ -1,7 +1,4 @@
 """ROC curve computation and aggregation for cross-validation experiments.
-
-Ported from ``pisces2.roc_analysis`` minus the CLI tooling and the
-``pisces2.utils`` dependency. Only numpy/scipy/sklearn are required.
 """
 from __future__ import annotations
 

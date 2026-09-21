@@ -24,7 +24,6 @@ def pad_or_truncate(
         mode: ``"pre"`` | ``"post"`` | ``"sym"`` (split evenly, extra goes
             after).
 
-    Ported from ``pisces2.utils.pad_or_truncate``.
     """
     current_length = array.shape[axis]
 

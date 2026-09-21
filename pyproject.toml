@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pisces-lite"
 version = "2.0.0"
-description = "ML-backend-agnostic core for the pisces2 work: preprocessing, metrics logging, ROC/AUROC analysis, plotting. No TensorFlow/Keras/YDF/JAX dependencies."
+description = "ML-backend-agnostic core supporting data set discovery, loading, common spectrogram/PSD-based processing, and CV scoring."
 requires-python = ">=3.12"
 dependencies = [
     "senpy @ git+https://github.com/Arcascope/sensor_preprocessing_cpp.git@3.1.0#subdirectory=senpy",

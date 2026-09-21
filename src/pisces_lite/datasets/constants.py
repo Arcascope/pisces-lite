@@ -1,8 +1,4 @@
 """Shared constants for dataset loading and processing.
-
-Ported from ``pisces2.constants`` minus values that belong in a per-dataset
-``data_set.json`` (gravity factors, dataset-specific mappings) or that were
-unused by the dataset loading path.
 """
 from __future__ import annotations
 
