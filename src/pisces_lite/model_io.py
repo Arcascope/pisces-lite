@@ -1,8 +1,4 @@
 """ModelIOBundle + feature-cache path helpers.
-
-Ported from ``pisces2.model_io`` (and cache helpers from ``pisces2.processing``)
-with the deprecated ``combine_and_normalize`` and the matplotlib ``plot``
-method dropped. Callers that need those can add them back as local helpers.
 """
 from __future__ import annotations
 
