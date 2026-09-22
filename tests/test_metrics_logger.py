@@ -82,10 +82,10 @@ def test_wide_format_record(tmp_path):
     assert len(df) == 1
 
 
-def test_off_wrist_class_is_not_sleep_for_tst_and_waso(tmp_path):
+def test_gap_class_is_not_sleep_for_tst_and_waso(tmp_path):
     cfg = MetricsConfig(
         num_classes=4,
-        class_names=["wake", "light", "deep", "rem", "off_wrist"],
+        class_names=["wake", "light", "deep", "rem", "gap"],
         psg_dt_minutes=1.0,
         min_stage_minutes=0.0,
         metrics=[

@@ -1,8 +1,5 @@
 """Per-dataset configuration parsed from ``<dataset_dir>/data_set.json``.
 
-Replaces the dataset-name-sniffing hacks in the old
-``pisces2.processing.load_data`` (``if "dreamt" in data_set.name: ...``).
-Every knob that used to be conditional on a substring match now lives here.
 """
 from __future__ import annotations
 

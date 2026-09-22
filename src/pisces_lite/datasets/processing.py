@@ -1,9 +1,5 @@
 """Data processing functions for PSG and accelerometer data.
 
-Ported from ``pisces2.data_sets.data_processing`` — pure numpy/pandas/scipy.
-The dataset-name-sniffing hacks from ``pisces2.processing.load_data`` are NOT
-ported here; they belong in per-dataset ``data_set.json`` and are applied by
-the loader in :mod:`pisces_lite.datasets.data_set_object`.
 """
 from __future__ import annotations
 

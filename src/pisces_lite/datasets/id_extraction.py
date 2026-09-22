@@ -1,6 +1,5 @@
 """Prefix-tree-based subject-ID extraction from file names.
 
-Ported from ``pisces2.arcana`` (``SimplifiablePrefixTree`` + ``IdExtractor``).
 Used as a fallback when ``data_set.json`` does not specify an ``id_pattern`` —
 the tree algorithm reverses file names, walks a prefix tree, and pulls the
 varying-suffix portion as the subject id.

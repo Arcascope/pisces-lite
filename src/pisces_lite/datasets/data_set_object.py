@@ -1,10 +1,8 @@
 """DataSetObject: discover and load multi-feature sleep-study datasets.
 
-Ported from ``pisces2.data_sets.data_set_object`` with a few cruft removals
-(broken polars-syntax ``save_*`` methods and the unused ``load_feature_data``
-stub are gone). A new ``config`` attribute carries a :class:`DataSetConfig`
+A new ``config`` attribute carries a :class:`DataSetConfig`
 when ``data_set.json`` is present next to the data; callers read dataset-
-specific knobs from ``data_set.config`` instead of sniffing ``data_set.name``.
+specific knobs from ``data_set.config`` instead of parsing ``data_set.name``.
 """
 from __future__ import annotations
 

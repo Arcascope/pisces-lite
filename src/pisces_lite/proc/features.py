@@ -50,9 +50,7 @@ class SpectrogramFeature(FrequencyFeature):
 def get_feature_by_name(name: str, **kwargs) -> FrequencyFeature | None:
     """Dispatcher for feature names used by ProcessingConfig._build_pipeline.
 
-    Only ``"spectrogram"`` / ``"SpectrogramFeature"`` are supported here. Other
-    names from the full pisces2 feature library would pull in heavier deps and
-    aren't needed for inference on the shipped inputs.json.
+    Only ``"spectrogram"`` / ``"SpectrogramFeature"`` are supported here.
     """
     feature_classes = {
         "SpectrogramFeature": SpectrogramFeature,

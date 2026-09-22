@@ -1,7 +1,6 @@
 """ROC and AUROC analysis.
 
-Exposes ``ROCResult`` and ``ROCResultCollection`` ported from
-``pisces2.roc_analysis``. The ``auroc`` metric spec
+Exposes ``ROCResult`` and ``ROCResultCollection``. The ``auroc`` metric spec
 (``pisces_lite.metrics.specs.auroc``) uses these to write
 ``roc_curves.npz`` next to the metrics CSV and return the scalar AUROC to
 the logger.

@@ -8,9 +8,6 @@
 #   - pisces-lite itself, which pulls numpy/scipy/sklearn/pandas/matplotlib/
 #     seaborn/tqdm and senpy as dependencies
 #
-# Explicitly NOT installed here:
-#   - TensorFlow, Keras, YDF, JAX/flax/optax as pisces-lite deps, pisces2
-#
 # Framework consumers (e.g. autofish-jax) layer flax/optax or other trainer
 # packages on top of this image. The base already ships JAX itself.
 #

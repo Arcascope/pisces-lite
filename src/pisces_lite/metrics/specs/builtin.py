@@ -1,4 +1,6 @@
-"""Built-in metric specs. Ported from pisces2.scoring (no TensorFlow)."""
+"""Built-in metric specs. 
+
+Extensible through registering new metrics via the @register_metric decoration."""
 from __future__ import annotations
 
 from typing import Callable, List
