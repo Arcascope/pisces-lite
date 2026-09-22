@@ -1,6 +1,11 @@
 import numpy as np
 import pytest
 
+pytest.importorskip(
+    "senpy",
+    reason="processing backend is the optional [proc] extra; see pyproject.toml",
+)
+
 from pisces_lite.proc.config import ProcessingConfig
 from pisces_lite.proc.processing import (
     ComputeStackedSpectrogramsNUFFT,

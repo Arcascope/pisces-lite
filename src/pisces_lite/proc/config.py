@@ -82,8 +82,11 @@ class ProcessingConfig:
         }
 
         if self.spectral_channels is not None:
-            from pisces_lite.proc.processing import stacked_nufft_pipeline
+            from pisces_lite.proc._backend import load_processing
 
+            stacked_nufft_pipeline = load_processing(
+                "building a stacked NUFFT pipeline"
+            ).stacked_nufft_pipeline
             return stacked_nufft_pipeline(
                 secperseg=self.window_seconds,
                 secoverlap=secoverlap,
@@ -97,8 +100,9 @@ class ProcessingConfig:
                 nufft_backend_kwargs=self.nufft_backend_kwargs,
             )
 
-        from pisces_lite.proc.processing import nufft_based_features
+        from pisces_lite.proc._backend import load_processing
 
+        nufft_based_features = load_processing("building a NUFFT feature pipeline").nufft_based_features
         return nufft_based_features(
             secperseg=self.window_seconds,
             secoverlap=secoverlap,
