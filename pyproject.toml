@@ -4,11 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pisces-lite"
-version = "2.0.0"
+version = "3.0.0"
 description = "ML-backend-agnostic core supporting data set discovery, loading, common spectrogram/PSD-based processing, and CV scoring."
 requires-python = ">=3.12"
+# senpy is deliberately NOT here. It is a compiled extension (pybind11 +
+# finufft) and is only ever used by pisces_lite.proc, which turns raw
+# accelerometer data into spectrograms. A consumer working from an already
+# built feature cache -- a training or inference host -- imports cv, metrics,
+# model_io and ProcessingConfig but never calls into proc, so making it a hard
+# dependency forced a C++ toolchain into images that had nothing to compile.
+# Install "pisces-lite[proc]" to do the processing itself.
 dependencies = [
-    "senpy @ git+https://github.com/Arcascope/sensor_preprocessing_cpp.git@3.1.0#subdirectory=senpy",
     "matplotlib",
     "numpy",
     "scipy",
@@ -20,9 +26,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+# The processing pipeline: pisces_lite.proc's runtime backend.
+proc = [
+    "senpy @ git+https://github.com/Arcascope/sensor_preprocessing_cpp.git@4.0.0#subdirectory=senpy",
+]
+# proc on a JAX NUFFT backend. Superset of [proc]; senpy[jax] covers senpy.
 jax = [
-    "jax-finufft>=1.3.0",
-    "senpy[jax] @ git+https://github.com/Arcascope/sensor_preprocessing_cpp.git@3.1.0#subdirectory=senpy",
+    "senpy[jax] @ git+https://github.com/Arcascope/sensor_preprocessing_cpp.git@4.0.0#subdirectory=senpy",
 ]
 
 [tool.setuptools.packages.find]

@@ -5,8 +5,8 @@
 # Contents:
 #   - NVIDIA JAX base (nvcr.io/nvidia/jax) for CUDA userspace + Python 3.12
 #   - git + cmake + build-essential (required to build senpy from GitHub)
-#   - pisces-lite itself, which pulls numpy/scipy/sklearn/pandas/matplotlib/
-#     seaborn/tqdm and senpy as dependencies
+#   - pisces-lite[proc], which pulls numpy/scipy/sklearn/pandas/matplotlib/
+#     seaborn/tqdm, plus senpy from the optional [proc] extra
 #
 # Framework consumers (e.g. autofish-jax) layer flax/optax or other trainer
 # packages on top of this image. The base already ships JAX itself.
@@ -36,7 +36,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /pisces-lite
 COPY pyproject.toml ./
 COPY src/ src/
-RUN pip install --no-cache-dir .
+# [proc] pulls senpy, the compiled processing backend. It is an extra now,
+# so an image that only scores or serves from a prebuilt feature cache can
+# install plain `.` and drop git/cmake/build-essential above.
+RUN pip install --no-cache-dir ".[proc]"
 
 USER ${USERNAME}
 WORKDIR /home/${USERNAME}/workspace
