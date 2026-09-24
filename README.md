@@ -11,7 +11,9 @@ pip install pisces-lite
 ```
 
 Python 3.12+. To do the processing yourself rather than read a prebuilt feature
-cache, install an extra — see [Optional extras](#optional-extras):
+cache, install an extra — see [Optional extras](#optional-extras). The `proc`
+and `jax` extras require a Python version the compiled backend publishes wheels
+for (currently 3.12–3.14):
 
 ```bash
 pip install "pisces-lite[proc]"
@@ -62,8 +64,8 @@ the processing pipeline itself.
 
 | Extra | Install | What it adds | Use when |
 |---|---|---|---|
-| `proc` | `pip install "pisces-lite[proc]"` | `senpy` (compiled pybind11 + finufft), the CPU `streaming`/`cpu` NUFFT backends | You are turning raw accelerometer data into spectrograms |
-| `jax` | `pip install "pisces-lite[jax]"` | `senpy[jax]` and JAX, adding the `jax` NUFFT backend | You want GPU-batched spectrogram extraction |
+| `proc` | `pip install "pisces-lite[proc]"` | `arcascope-senpy` (import name `senpy`; compiled pybind11 + finufft), the CPU `streaming`/`cpu` NUFFT backends | You are turning raw accelerometer data into spectrograms |
+| `jax` | `pip install "pisces-lite[jax]"` | `arcascope-senpy[jax]` and JAX, adding the `jax` NUFFT backend | You want GPU-batched spectrogram extraction |
 | `dev` | `pip install "pisces-lite[dev]"` | `pytest` | You are running the test suite |
 
 Working from a prebuilt feature cache — a training or inference host that only

@@ -13,14 +13,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       # Base install only: the [proc] backend tests importorskip, so this job
-      # validates the framework-agnostic core on both supported Pythons.
+      # validates the framework-agnostic core across supported Pythons even if
+      # the backend is unavailable for one of them.
       - name: Install with dev extras
         run: |
           python -m pip install --upgrade pip
@@ -29,14 +30,18 @@ jobs:
         run: python -m pytest tests/ -q
 
   test-proc:
-    name: Test with processing backend
+    name: Test with processing backend (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # arcascope-senpy 4.0.2 ships cp312/cp313/cp314 wheels.
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          # arcascope-senpy currently ships cp312 wheels only.
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Install with proc and dev extras
         run: |
           python -m pip install --upgrade pip

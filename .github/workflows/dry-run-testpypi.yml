@@ -1,18 +1,17 @@
-name: release
+name: Dry run publish to TestPyPI
 
-# Builds and publishes pisces-lite to PyPI when a GitHub Release is published.
-#
-# Authentication uses PyPI Trusted Publishing (OIDC): no API token or secret is
-# stored. PyPI must have a publisher configured for this repository and the
-# workflow filename below (`release.yml`), bound to the `pypi` environment.
-# See https://docs.pypi.org/trusted-publishers/.
-#
-# For a TestPyPI dry run, use the separate "dry-run-testpypi" workflow.
+# Manual dry run of the release path against TestPyPI. Requires a TestPyPI
+# Trusted Publisher for this repository (workflow `dry-run-testpypi.yml`,
+# environment `testpypi`).
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build from (branch, tag, or SHA)"
+        required: false
+        default: main
+        type: string
 
 jobs:
   build:
@@ -21,6 +20,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -43,6 +44,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -58,13 +61,13 @@ jobs:
           python -m pip install "dist/"*.whl pytest
           python -m pytest tests/ -q
 
-  pypi-publish:
-    name: Publish to PyPI
+  publish-testpypi:
+    name: Publish to TestPyPI
     needs: [build, test]
     runs-on: ubuntu-latest
     environment:
-      name: pypi
-      url: https://pypi.org/p/pisces-lite
+      name: testpypi
+      url: https://test.pypi.org/p/pisces-lite
     permissions:
       id-token: write
     steps:
@@ -75,5 +78,8 @@ jobs:
           path: dist/
       - name: List distributions
         run: ls -lh dist
-      - name: Publish package distributions to PyPI
+      - name: Publish package distributions to TestPyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
