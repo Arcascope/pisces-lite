@@ -190,8 +190,8 @@ class ProcessingConfig:
 
         ``region`` selects feature ``feature_index`` values below the threshold;
         when nothing qualifies, the whole array is used. ``denom`` is the std
-        except under ``"original_norm"``, which divides by the mean instead --
-        a legacy transform that assumes strictly positive features.
+        except under ``"original_norm"``, which divides by the mean instead.
+        This is also called _relative deviation_. 
         """
         region = all_X[:, self.feature_index] < self.normalize_below
         if not np.any(region):
