@@ -1,7 +1,7 @@
 """Multi-feature sleep-study dataset loading.
 
-Ported from ``pisces2.data_sets`` with dataset-name-sniffing hacks replaced
-by a per-dataset :class:`DataSetConfig` parsed from ``data_set.json``.
+Datasets are described by a per-dataset :class:`DataSetConfig` parsed from
+``data_set.json`` rather than sniffed from the dataset name.
 """
 from pisces_lite.datasets.constants import (
     ACC_HZ,

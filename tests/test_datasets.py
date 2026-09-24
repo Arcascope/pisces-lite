@@ -17,10 +17,10 @@ from pisces_lite.datasets import (
     Y_COL,
     Z_COL,
     align_trim,
-    get_subject_data,
     load_data_sets_from_adapter,
     load_subject,
     mask_data,
+    psg_map,
 )
 
 
@@ -102,6 +102,37 @@ def test_find_parse_get_with_id_pattern(tmp_path):
     )
     ds = DataSetObject.find_data_sets(tmp_path)["walch_et_al"]
     assert ds.ids == ["001", "002"]
+
+
+@pytest.mark.parametrize("use_id_pattern", [False, True])
+def test_unpadded_ids_map_to_their_own_files(tmp_path, use_id_pattern):
+    # Lexicographic id order diverges from filename order ("sen1" < "sen10"
+    # but "sen10_accel.csv" < "sen1_accel.csv"). Each id must still map to the
+    # file it was extracted from, not merely to the same index. Covered for
+    # both the prefix-tree fallback and an explicit id_pattern.
+    ds_root = tmp_path / "SENSE"
+    accel_dir = ds_root / "cleaned_accelerometer"
+    accel_dir.mkdir(parents=True)
+    n_by_sid = {"sen1": 5, "sen2": 6, "sen10": 7}
+    for sid, n in n_by_sid.items():
+        pd.DataFrame({
+            "time": np.arange(n, dtype=float),
+            "x": np.full(n, float(n)),
+            "y": np.zeros(n),
+            "z": np.zeros(n),
+        }).to_csv(accel_dir / f"{sid}_accel.csv", index=False)
+    if use_id_pattern:
+        (ds_root / "data_set.json").write_text(json.dumps({
+            "name": "SENSE",
+            "id_pattern": "<<ID>>_accel.csv",
+        }))
+
+    ds = DataSetObject.find_data_sets(tmp_path)["SENSE"]
+
+    assert ds.ids == ["sen1", "sen10", "sen2"]
+    for sid, n in n_by_sid.items():
+        assert ds.get_filename("accelerometer", sid).name == f"{sid}_accel.csv"
+        assert len(ds.get_feature_data("accelerometer", sid)) == n
 
 
 def test_config_loads_from_json(tmp_path):
@@ -290,6 +321,39 @@ def test_mask_data_masks_only_uncovered_epochs() -> None:
 
     assert list(np.flatnonzero(masked[PSG_COL].to_numpy() == -2)) == [5]
     assert (masked[PSG_COL].to_numpy() != -1).all()
+
+
+def test_mask_data_does_not_mutate_input() -> None:
+    accel, psg = _coverage_frames([5])
+    before = psg[PSG_COL].tolist()
+
+    mask_data(accel, psg)
+
+    assert psg[PSG_COL].tolist() == before
+
+
+def test_psg_map_does_not_mutate_input() -> None:
+    psg = pd.DataFrame({PSG_COL: [0, 1, 2, 3]})
+    before = psg[PSG_COL].tolist()
+
+    mapped = psg_map(psg, {0: 0, 1: 1, 2: 2, 3: 5})
+
+    assert psg[PSG_COL].tolist() == before
+    assert mapped[PSG_COL].tolist() == [0, 1, 2, 5]
+
+
+def test_align_trim_no_overlap_warns_and_empties() -> None:
+    accel = pd.DataFrame({
+        TIMESTAMP_COL: [0.0, 1.0],
+        X_COL: [0.0, 0.0], Y_COL: [0.0, 0.0], Z_COL: [1.0, 1.0],
+    })
+    psg = pd.DataFrame({TIMESTAMP_COL: [100.0, 130.0], PSG_COL: [0, 1]})
+
+    with pytest.warns(RuntimeWarning, match="do not overlap"):
+        accel_aligned, psg_aligned = align_trim(accel, psg)
+
+    assert len(accel_aligned) == 0
+    assert len(psg_aligned) == 0
 
 
 def test_mask_data_does_not_dilate_by_default() -> None:

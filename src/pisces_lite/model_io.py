@@ -2,7 +2,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
@@ -103,9 +103,10 @@ class ModelIOBundle:
             3: PSG_5C_MAPPING_TO_WNR,
             4: PSG_5C_MAPPING_TO_WLDR,
         }.get(num_classes, {})
-        if not mapping:
-            return self.y
-        return np.vectorize(lambda x: mapping.get(x, x))(self.y)
+        y = np.asarray(self.y)
+        if not mapping or y.size == 0:
+            return y
+        return np.vectorize(lambda x: mapping.get(x, x), otypes=[y.dtype])(y)
 
     @property
     def has_freq(self) -> bool:
@@ -130,10 +131,9 @@ def resolve_feature_cache_dir(
     """
     if feature_cache_dir is None:
         return None
-    out_path = Path(feature_cache_dir) / (
-        cache_prefix if cache_prefix is not None 
-        else processing_config.type / f"{processing_config.fs}Hz"
-    )
-
-    return out_path
+    if cache_prefix is not None:
+        subdirectory = cache_prefix
+    else:
+        subdirectory = f"{processing_config.type}/{processing_config.fs}Hz"
+    return Path(feature_cache_dir) / subdirectory
 

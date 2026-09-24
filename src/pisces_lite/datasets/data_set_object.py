@@ -96,7 +96,7 @@ class DataSetObject:
 
     def drop_feature_data(self, feature: str, id: str) -> None:
         if feature not in self.features:
-            warnings.warn(f"Feature {feature!r} not found in {self.name}.")
+            warnings.warn(f"Feature {feature!r} not found in {self.name}.", stacklevel=2)
         self._feature_cache[feature].pop(id, None)
 
     def set_feature_data(self, feature: str, id: str, data: pd.DataFrame) -> None:
@@ -142,10 +142,13 @@ class DataSetObject:
         keep_in_memory: bool = True,
     ) -> Optional[pd.DataFrame]:
         if feature not in self.features:
-            warnings.warn(f"Feature {feature!r} not found in {self.name}. Returning None.")
+            warnings.warn(
+                f"Feature {feature!r} not found in {self.name}. Returning None.",
+                stacklevel=2,
+            )
             return None
         if id not in self.ids:
-            warnings.warn(f"ID {id!r} not found in {self.name}")
+            warnings.warn(f"ID {id!r} not found in {self.name}", stacklevel=2)
             return None
         if (df := self._feature_cache[feature].get(id)) is not None:
             return df
@@ -185,7 +188,7 @@ class DataSetObject:
             )
             df = df.dropna()
         except Exception as exc:
-            warnings.warn(f"Error reading {file}:\n{exc}")
+            warnings.warn(f"Error reading {file}:\n{exc}", stacklevel=2)
             return None
 
         df = df.sort_values(by=df.columns[0])
@@ -215,11 +218,10 @@ class DataSetObject:
             _log.debug("Adding feature %s to %s", feature, self.name)
             self._feature_map[feature] = {}
         deduped_ids = set(self.ids)
-        files_sorted = sorted(list(files))
-        extracted_ids = sorted(
-            IdExtractor().extract_ids(files_sorted, id_template, id_symbol)
-        )
-        for id_, file in zip(extracted_ids, files_sorted):
+        files_sorted = sorted(files)
+        for id_, file in IdExtractor().map_files_to_ids(
+            files_sorted, id_template, id_symbol
+        ):
             self._feature_map[feature][id_] = file
             deduped_ids.add(id_)
         self.ids = sorted(deduped_ids)
@@ -245,7 +247,7 @@ class DataSetObject:
         for feature in self.features:
             feature_path = self.get_feature_path(feature)
             if not feature_path.exists():
-                warnings.warn(f"Feature path {feature_path} not found.")
+                warnings.warn(f"Feature path {feature_path} not found.", stacklevel=2)
                 continue
             files = [f.name for f in feature_path.iterdir() if f.is_file()]
             relevant = [

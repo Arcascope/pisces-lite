@@ -37,10 +37,15 @@ def default_class_names(num_classes: int) -> List[str]:
 class MetricsConfig:
     """Parsed ``metrics.json``.
 
-    Matches the existing autofish-jax/config/metrics.json schema plus:
+    Fields:
+      - ``num_classes``, ``psg_dt_minutes``, ``min_stage_minutes``: scoring setup
+      - ``metrics``: names of registered metric specs to evaluate
+      - ``per_class_counts`` / ``per_class_mape`` / ``confusion_matrix`` /
+        ``oura_gap``: per-class and derived metric flags
       - ``format``: ``"long"`` (default) or ``"wide"``
       - ``class_names``: optional, defaults from ``num_classes``
       - ``metric_column`` / ``value_column``: column names used in long format
+      - ``wake_class``: index treated as wake for binary scoring
     """
 
     num_classes: int

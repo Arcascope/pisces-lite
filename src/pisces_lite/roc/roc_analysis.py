@@ -81,7 +81,7 @@ class ROCResult:
         probability is ``1 - P(wake)``.
         """
         y_true_arr = np.asarray(y_true)
-        y_score_select = y_true_arr >= wake_class
+        y_score_select = y_true_arr >= 0
         y_score = y_true_arr[y_score_select]
         y_pred_score = np.asarray(y_proba)[y_score_select]
 

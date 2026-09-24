@@ -7,12 +7,7 @@ pytest.importorskip(
 )
 
 from pisces_lite.proc.config import ProcessingConfig
-from pisces_lite.proc.processing import (
-    ComputeStackedSpectrogramsNUFFT,
-    RegulariseStackedNUFFTGrid,
-    ExtractStackedArray,
-    stacked_nufft_pipeline,
-)
+from pisces_lite.proc.processing import stacked_nufft_pipeline
 
 
 def _make_accel_array(n_seconds: float = 120.0, fs: float = 50.0) -> np.ndarray:
