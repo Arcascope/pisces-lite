@@ -2,7 +2,8 @@
 
 ML-backend-agnostic core for wearable sleep data: dataset discovery and loading,
 accelerometer-to-spectrogram processing, cross-validation splitting, and metrics
-logging. It carries no model framework — bring your own trainer.
+logging. It carries no model framework, though there is a JAX-accelerated option
+for the `[proc]` extra components.
 
 ## Install
 
