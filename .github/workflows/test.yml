@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # arcascope-senpy 4.0.2 ships cp312/cp313/cp314 wheels.
+        # arcascope-senpy ships cp312/cp313/cp314 wheels.
         python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
