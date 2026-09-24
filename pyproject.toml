@@ -45,11 +45,11 @@ dev = ["pytest"]
 # The distribution is named `arcascope-senpy`; its import name is `senpy`.
 # (There is an unrelated `senpy` project on PyPI, hence the prefixed name.)
 proc = [
-    "arcascope-senpy==4.0.2",
+    "arcascope-senpy==4.0.3",
 ]
 # proc on a JAX NUFFT backend. Superset of [proc]; arcascope-senpy[jax] covers it.
 jax = [
-    "arcascope-senpy[jax]==4.0.2",
+    "arcascope-senpy[jax]==4.0.3",
 ]
 
 [project.urls]
