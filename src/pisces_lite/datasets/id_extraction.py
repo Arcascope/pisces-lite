@@ -115,6 +115,10 @@ class IdExtractor(SimplifiablePrefixTree):
         With ``id_template`` each file is converted independently. Without it,
         every file is matched to the longest prefix-tree leaf that heads it, so
         ids whose lexicographic order differs from the filenames still line up.
+
+        Raises ``ValueError`` if two distinct files resolve to the same id --
+        that would silently drop one of them when the map is built, so it is
+        reported instead. Supply an ``'id_pattern'`` to disambiguate.
         """
         files = list(files)
         if not files:
@@ -122,9 +126,11 @@ class IdExtractor(SimplifiablePrefixTree):
 
         if id_template is not None:
             prefix, suffix = id_template.split(id_symbol)
-            return [
-                (f.replace(prefix, "").replace(suffix, ""), f) for f in files
+            pairs = [
+                (self._id_from_template(f, prefix, suffix), f) for f in files
             ]
+            self._check_for_id_collisions(pairs)
+            return pairs
 
         if len(files) == 1:
             raise ValueError(
@@ -135,7 +141,7 @@ class IdExtractor(SimplifiablePrefixTree):
             self.insert(file[::-1])
         ids = sorted(c.key for c in self._prefix_flattened().children.values())
 
-        pairs: List[tuple[str, str]] = []
+        pairs = []
         for file in files:
             matches = [i for i in ids if file.startswith(i)]
             if not matches:
@@ -146,7 +152,34 @@ class IdExtractor(SimplifiablePrefixTree):
                 )
             longest = max(len(m) for m in matches)
             pairs.append((next(m for m in matches if len(m) == longest), file))
+        self._check_for_id_collisions(pairs)
         return pairs
+
+    @staticmethod
+    def _id_from_template(filename: str, prefix: str, suffix: str) -> str:
+        """Strip only a *leading* prefix and *trailing* suffix from ``filename``.
+
+        Anchored rather than ``str.replace``: with template ``"s<<ID>>.csv"``,
+        replacing every ``"s"`` would also eat the ``s`` in ``csv``.
+        """
+        if prefix and filename.startswith(prefix):
+            filename = filename[len(prefix):]
+        if suffix and filename.endswith(suffix):
+            filename = filename[: -len(suffix)]
+        return filename
+
+    @staticmethod
+    def _check_for_id_collisions(pairs: List[tuple[str, str]]) -> None:
+        files_by_id: Dict[str, str] = {}
+        for id_, file in pairs:
+            previous = files_by_id.get(id_)
+            if previous is not None and previous != file:
+                raise ValueError(
+                    f"Subject ID {id_!r} was extracted from two different files "
+                    f"({previous!r} and {file!r}); the files cannot be told "
+                    f"apart. Provide an 'id_pattern' that separates them."
+                )
+            files_by_id[id_] = file
 
     def _prefix_flattened(self) -> "IdExtractor":
         return self.simplified().flattened(1).reversed()

@@ -43,3 +43,18 @@ def test_single_file_without_template_raises():
 def test_empty_files_raises():
     with pytest.raises(ValueError, match="at least one file"):
         IdExtractor().map_files_to_ids([], None, "<<ID>>")
+
+
+def test_template_strips_only_leading_prefix_and_trailing_suffix():
+    # A global str.replace would also remove the "s" inside "csv".
+    pairs = IdExtractor().map_files_to_ids(
+        ["s1.csv", "ss1.csv"], "s<<ID>>.csv", "<<ID>>"
+    )
+    assert pairs == [("1", "s1.csv"), ("s1", "ss1.csv")]
+
+
+def test_prefix_tree_collision_raises():
+    # "c.csv" and "cac.csv" both reduce to leaf id "c"; silently overwriting
+    # one would drop a subject, so this must be reported instead.
+    with pytest.raises(ValueError, match="cannot be told apart"):
+        IdExtractor().map_files_to_ids(["c.csv", "cac.csv", "cb.csv"], None, "<<ID>>")
