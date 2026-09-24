@@ -59,7 +59,6 @@ class DataSetConfig:
           "accel": { "gravity_divisor": 64.0, "nominal_hz": 64 },
           "psg":   { "mapping_preset": "dreamt" },
           "csv":   { "delimiter": "," },
-          "timestamp": { "unit": "s" },
           "timestamp": {
             "unit": "s",
             "unit_by_feature": { "accelerometer": "ms", "psg": "s" }

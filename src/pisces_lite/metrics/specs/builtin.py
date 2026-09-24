@@ -3,7 +3,7 @@
 Extensible through registering new metrics via the @register_metric decoration."""
 from __future__ import annotations
 
-from typing import Callable, List
+from typing import List
 
 import numpy as np
 from sklearn.metrics import balanced_accuracy_score, cohen_kappa_score, f1_score
@@ -11,7 +11,6 @@ from sklearn.metrics import balanced_accuracy_score, cohen_kappa_score, f1_score
 from pisces_lite.metrics.context import EvalContext
 from pisces_lite.metrics.specs.base import (
     MetricFn,
-    MetricSpec,
     hard_preds,
     min_stage_minutes,
     psg_dt,

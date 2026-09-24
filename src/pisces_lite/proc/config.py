@@ -186,6 +186,13 @@ class ProcessingConfig:
         return mean, denom
 
     def _compute_stats(self, all_X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Per-feature ``(mean, denom)`` over the region kept by ``normalize_below``.
+
+        ``region`` selects feature ``feature_index`` values below the threshold;
+        when nothing qualifies, the whole array is used. ``denom`` is the std
+        except under ``"original_norm"``, which divides by the mean instead.
+        This is also called _relative deviation_. 
+        """
         region = all_X[:, self.feature_index] < self.normalize_below
         if not np.any(region):
             region = np.ones(len(all_X), dtype=bool)
@@ -194,7 +201,7 @@ class ProcessingConfig:
             denom = np.mean(all_X[region], axis=0)
         else:
             denom = np.std(all_X[region], axis=0)
-        return mean,denom 
+        return mean, denom
 
     def apply(
         self,
@@ -241,6 +248,8 @@ class ProcessingConfig:
         if normalize:
             return [
                 self.normalize(features, data_set_name=data_set_name)
-                for features, data_set_name in zip(features_many, data_set_names)
+                for features, data_set_name in zip(
+                    features_many, data_set_names, strict=True
+                )
             ]
         return features_many

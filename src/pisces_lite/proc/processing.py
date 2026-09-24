@@ -204,7 +204,7 @@ class CompositeStep(ProcessingStep):
             try:
                 _log.info("step %s starting", step.name)
                 x_out = step.transform(x_out)
-            except BaseException as exc:
+            except BaseException:
                 _log.exception("step %s raised after %.2fs", step.name, time.monotonic() - t0)
                 raise
             shape = getattr(x_out, "shape", None)
@@ -653,7 +653,7 @@ class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
             _stack_spectrogram_results(
                 specs, channels, self.secperseg - self.secoverlap
             )
-            for specs, (_, _, channels) in zip(grouped_specs, prepared)
+            for specs, (_, _, channels) in zip(grouped_specs, prepared, strict=True)
         ]
 
 
@@ -669,7 +669,7 @@ def _stack_spectrogram_results(
         dtype=np.float64,
     )
     unmatched = {}
-    for channel_index, (channel, spec) in enumerate(zip(channels, specs)):
+    for channel_index, (channel, spec) in enumerate(zip(channels, specs, strict=True)):
         if not np.array_equal(spec.frequencies, ref.frequencies):
             raise ValueError(f"NUFFT backend produced an incompatible grid for {channel!r}")
         if np.array_equal(spec.times, ref.times):

@@ -55,7 +55,7 @@ class SimplifiablePrefixTree:
         flat = SimplifiablePrefixTree(self.delimiter, key=self.key)
         if max_depth == 0:
             if not self.is_end_of_word:
-                warnings.warn(f"max_depth is 0, but {self.key!r} is not a leaf.")
+                warnings.warn(f"max_depth is 0, but {self.key!r} is not a leaf.", stacklevel=2)
             return flat
         if max_depth == 1:
             for k, v in self.children.items():
@@ -83,8 +83,14 @@ class IdExtractor(SimplifiablePrefixTree):
 
     If ``id_template`` is given (e.g. ``"subject_<<ID>>.csv"``), ids are
     produced by simple string replace. Otherwise, the prefix-tree algorithm
-    reverses file names, simplifies + flattens the tree, and returns the
-    leaves (re-reversed) as the ids.
+    reverses file names, simplifies + flattens the tree, and uses the leaves
+    (re-reversed) as the ids.
+
+    ``map_files_to_ids`` returns ``(id, file)`` pairs so each file is paired
+    with *its own* id. The ids are not necessarily in lexicographic filename
+    order -- e.g. ``sen1`` sorts before ``sen10`` while ``sen10_accel.csv``
+    sorts before ``sen1_accel.csv`` -- so pairing by index would silently
+    assign subjects the wrong files.
     """
 
     def extract_ids(
@@ -93,24 +99,87 @@ class IdExtractor(SimplifiablePrefixTree):
         id_template: str | None,
         id_symbol: str,
     ) -> List[str]:
+        """Return the sorted, de-duplicated ids found across ``files``."""
+        return sorted(
+            {id_ for id_, _ in self.map_files_to_ids(files, id_template, id_symbol)}
+        )
+
+    def map_files_to_ids(
+        self,
+        files: "List[str] | tuple[str, ...]",
+        id_template: str | None,
+        id_symbol: str,
+    ) -> List[tuple[str, str]]:
+        """Return ``(id, file)`` pairs, one per input file.
+
+        With ``id_template`` each file is converted independently. Without it,
+        every file is matched to the longest prefix-tree leaf that heads it, so
+        ids whose lexicographic order differs from the filenames still line up.
+
+        Raises ``ValueError`` if two distinct files resolve to the same id --
+        that would silently drop one of them when the map is built, so it is
+        reported instead. Supply an ``'id_pattern'`` to disambiguate.
+        """
+        files = list(files)
         if not files:
             raise ValueError("Please provide at least one file name to extract IDs")
 
-        if len(files) == 1:
-            if not id_template:
-                raise ValueError(
-                    "Please provide an ID template if you only have one file name."
-                )
+        if id_template is not None:
             prefix, suffix = id_template.split(id_symbol)
-            return [files[0].replace(prefix, "").replace(suffix, "")]
+            pairs = [
+                (self._id_from_template(f, prefix, suffix), f) for f in files
+            ]
+            self._check_for_id_collisions(pairs)
+            return pairs
 
-        if id_template is None:
-            for file in files:
-                self.insert(file[::-1])
-            return sorted(c.key for c in self._prefix_flattened().children.values())
+        if len(files) == 1:
+            raise ValueError(
+                "Please provide an ID template if you only have one file name."
+            )
 
-        prefix, suffix = id_template.split(id_symbol)
-        return sorted(f.replace(prefix, "").replace(suffix, "") for f in files)
+        for file in files:
+            self.insert(file[::-1])
+        ids = sorted(c.key for c in self._prefix_flattened().children.values())
+
+        pairs = []
+        for file in files:
+            matches = [i for i in ids if file.startswith(i)]
+            if not matches:
+                raise ValueError(
+                    f"Could not extract a subject ID from {file!r} with the "
+                    f"prefix-tree algorithm (candidate IDs: {ids}). Provide an "
+                    f"'id_pattern' for this dataset."
+                )
+            longest = max(len(m) for m in matches)
+            pairs.append((next(m for m in matches if len(m) == longest), file))
+        self._check_for_id_collisions(pairs)
+        return pairs
+
+    @staticmethod
+    def _id_from_template(filename: str, prefix: str, suffix: str) -> str:
+        """Strip only a *leading* prefix and *trailing* suffix from ``filename``.
+
+        Anchored rather than ``str.replace``: with template ``"s<<ID>>.csv"``,
+        replacing every ``"s"`` would also eat the ``s`` in ``csv``.
+        """
+        if prefix and filename.startswith(prefix):
+            filename = filename[len(prefix):]
+        if suffix and filename.endswith(suffix):
+            filename = filename[: -len(suffix)]
+        return filename
+
+    @staticmethod
+    def _check_for_id_collisions(pairs: List[tuple[str, str]]) -> None:
+        files_by_id: Dict[str, str] = {}
+        for id_, file in pairs:
+            previous = files_by_id.get(id_)
+            if previous is not None and previous != file:
+                raise ValueError(
+                    f"Subject ID {id_!r} was extracted from two different files "
+                    f"({previous!r} and {file!r}); the files cannot be told "
+                    f"apart. Provide an 'id_pattern' that separates them."
+                )
+            files_by_id[id_] = file
 
     def _prefix_flattened(self) -> "IdExtractor":
         return self.simplified().flattened(1).reversed()

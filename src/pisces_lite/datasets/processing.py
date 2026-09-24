@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 
+import warnings
 from typing import Dict
 
 import numpy as np
@@ -72,11 +73,15 @@ def psg_map(
     psg_col: str = PSG_COL,
     psg_mask: int = PSG_MASK,
 ) -> pd.DataFrame:
-    """Remap PSG stage values using ``mapping_dict``; unmapped → ``psg_mask``."""
-    psg_data[psg_col] = (
-        psg_data[psg_col].map(mapping_dict).fillna(psg_mask).astype(int)
+    """Remap PSG stage values using ``mapping_dict``; unmapped → ``psg_mask``.
+
+    Returns a new frame; ``psg_data`` is left unchanged.
+    """
+    out = psg_data.copy()
+    out[psg_col] = (
+        out[psg_col].map(mapping_dict).fillna(psg_mask).astype(int)
     )
-    return psg_data
+    return out
 
 
 def psg_to_sleep_wake(
@@ -111,9 +116,21 @@ def align_trim(
     corresponds to wall-clock time ``start_time + i * psg_dt`` — which is the
     convention assumed by the downstream feature pipeline, which lays X out
     on the same uniform grid.
+
+    If either frame is empty there is nothing to align, and if the two share
+    no snapped epoch the trim would be empty; both cases emit a
+    ``RuntimeWarning``. In the no-overlap case both frames are returned empty.
     """
     accelerometer_data = accelerometer_data.sort_values(by=timestamp_col)
     psg_data = psg_data.sort_values(by=timestamp_col)
+    if accelerometer_data.empty or psg_data.empty:
+        warnings.warn(
+            "align_trim got an empty accelerometer or PSG frame; "
+            "returning the frames unaligned.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return accelerometer_data, psg_data
     psg_phase = float(psg_data[timestamp_col].iloc[0]) % float(psg_dt)
     accel_start = accelerometer_data[timestamp_col].iloc[0]
     accel_end = accelerometer_data[timestamp_col].iloc[-1]
@@ -125,6 +142,17 @@ def align_trim(
         psg_phase + psg_dt * np.floor((accel_end - psg_phase) / psg_dt),
         psg_data[timestamp_col].iloc[-1],
     )
+    if start_time > end_time:
+        warnings.warn(
+            f"align_trim: accelerometer and PSG do not overlap after snapping "
+            f"to {psg_dt}s epochs (start {start_time} > end {end_time}); "
+            "returning empty frames.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        empty_accel = accelerometer_data.iloc[0:0]
+        empty_psg = psg_data.iloc[0:0]
+        return empty_accel, empty_psg
     psg_data = psg_data[
         (psg_data[timestamp_col] >= start_time) & (psg_data[timestamp_col] <= end_time)
     ]
@@ -163,9 +191,12 @@ def mask_data(
     Coverage is evaluated against the original accelerometer data for every
     epoch before anything is written, so masked epochs can never trigger
     further masking.
+
+    Returns a new frame; ``psg_data`` is left unchanged.
     """
     if psg_data.empty:
-        return psg_data
+        return psg_data.copy()
+    psg_data = psg_data.copy()
     epoch_starts = psg_data[timestamp_col].to_numpy(dtype=float)
     accel_times = np.sort(accelerometer_data[timestamp_col].to_numpy(dtype=float))
     counts = np.searchsorted(

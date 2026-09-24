@@ -96,7 +96,7 @@ def test_etc_score_macro_is_default_and_averages_per_recording():
     S, L = [s1, s2], [l1, l2]
 
     # default (macro) == mean of independently scored batches-of-1
-    per = [etc_score(m, s, l) for s, l in zip(S, L)]
+    per = [etc_score(m, s, l) for s, l in zip(S, L, strict=True)]
     assert pytest.approx(etc_score(m, S, L)) == float(np.mean(per))
     # a single recording scores the same either way
     assert pytest.approx(etc_score(m, s1, l1)) == per[0]
