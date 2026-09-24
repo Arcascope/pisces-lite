@@ -1,0 +1,45 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      # Base install only: the [proc] backend tests importorskip, so this job
+      # validates the framework-agnostic core on both supported Pythons.
+      - name: Install with dev extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev]"
+      - name: Run tests
+        run: python -m pytest tests/ -q
+
+  test-proc:
+    name: Test with processing backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          # arcascope-senpy currently ships cp312 wheels only.
+          python-version: "3.12"
+      - name: Install with proc and dev extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[proc,dev]"
+      - name: Run tests
+        run: python -m pytest tests/ -q

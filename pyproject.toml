@@ -1,12 +1,25 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "pisces-lite"
 version = "3.0.0"
 description = "ML-backend-agnostic core supporting data set discovery, loading, common spectrogram/PSD-based processing, and CV scoring."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Arcascope Inc", email = "support@arcascope.com" }]
 requires-python = ">=3.12"
+keywords = ["sleep", "actigraphy", "accelerometer", "spectrogram", "wearables"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+
 # senpy is deliberately NOT here. It is a compiled extension (pybind11 +
 # finufft) and is only ever used by pisces_lite.proc, which turns raw
 # accelerometer data into spectrograms. A consumer working from an already
@@ -27,13 +40,20 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest"]
 # The processing pipeline: pisces_lite.proc's runtime backend.
+# The distribution is named `arcascope-senpy`; its import name is `senpy`.
+# (There is an unrelated `senpy` project on PyPI, hence the prefixed name.)
 proc = [
-    "senpy @ git+https://github.com/Arcascope/sensor_preprocessing_cpp.git@4.0.0#subdirectory=senpy",
+    "arcascope-senpy==4.0.1",
 ]
-# proc on a JAX NUFFT backend. Superset of [proc]; senpy[jax] covers senpy.
+# proc on a JAX NUFFT backend. Superset of [proc]; arcascope-senpy[jax] covers it.
 jax = [
-    "senpy[jax] @ git+https://github.com/Arcascope/sensor_preprocessing_cpp.git@4.0.0#subdirectory=senpy",
+    "arcascope-senpy[jax]==4.0.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Arcascope/pisces-lite"
+Repository = "https://github.com/Arcascope/pisces-lite"
+Issues = "https://github.com/Arcascope/pisces-lite/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
