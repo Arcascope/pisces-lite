@@ -32,6 +32,18 @@ class ProcessingConfig:
     spectral_channels: Optional[List[str]] = None
     nufft_backend: str = "streaming"
     nufft_backend_kwargs: Dict[str, object] = field(default_factory=dict)
+    # Opt-in gap mode: when set, :meth:`mask_gap_epochs` marks an epoch as gap
+    # once more than this fraction of its spectrogram frames are excluded.
+    # ``None`` (the default) leaves labels exactly as they were.
+    gap_max_excluded_frame_fraction: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        fraction = self.gap_max_excluded_frame_fraction
+        if fraction is not None and not 0.0 <= float(fraction) < 1.0:
+            raise ValueError(
+                "gap_max_excluded_frame_fraction must be in [0, 1) or null, "
+                f"got {fraction!r}"
+            )
 
     @classmethod
     def from_json(cls, path: "Path | str") -> "ProcessingConfig":
@@ -60,6 +72,46 @@ class ProcessingConfig:
     @property
     def hop_length(self) -> int:
         return int(self.fs * self.window_step_seconds)
+
+    def frames_per_epoch(self, psg_dt: float = 30.0) -> int:
+        """Spectrogram frames per PSG epoch of ``psg_dt`` seconds.
+
+        Accounts for ``time_downsample_rate``. Raises when the epoch is not a
+        whole number of frames, since frames could then not be assigned to
+        epochs without straddling a boundary.
+        """
+        frame_seconds = float(self.window_step_seconds) * int(self.time_downsample_rate)
+        ratio = float(psg_dt) / frame_seconds
+        if ratio < 1 or abs(ratio - round(ratio)) > 1e-9:
+            raise ValueError(
+                f"a {psg_dt} s epoch is not a whole number of {frame_seconds} s frames"
+            )
+        return int(round(ratio))
+
+    def mask_gap_epochs(
+        self, labels: np.ndarray, features: np.ndarray, psg_dt: float = 30.0
+    ) -> np.ndarray:
+        """Apply the opt-in gap mode to epoch ``labels`` for these ``features``.
+
+        With ``gap_max_excluded_frame_fraction`` unset this returns an
+        unchanged copy of ``labels``. Otherwise an epoch is marked as the gap
+        label (``PAD_CLASS_LABEL``) when more than that fraction of its frames
+        are excluded. ``features`` are the frame-rate spectrogram from
+        :meth:`apply` with ``normalize=False``, aligned so frame 0 starts
+        epoch 0.
+        """
+        labels = np.array(labels, copy=True)
+        if self.gap_max_excluded_frame_fraction is None:
+            return labels
+        from pisces_lite.datasets.processing import mask_labels_by_frame_coverage
+        from pisces_lite.proc.frames import frame_validity
+
+        return mask_labels_by_frame_coverage(
+            labels,
+            frame_validity(features),
+            self.frames_per_epoch(psg_dt),
+            max_excluded_fraction=float(self.gap_max_excluded_frame_fraction),
+        )
 
     def get_frequencies(self) -> np.ndarray:
         all_freq = np.fft.rfftfreq(n=self.nfft, d=1 / self.fs)

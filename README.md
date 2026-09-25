@@ -47,6 +47,26 @@ config = ProcessingConfig.from_dict({"type": "nufft", "fs": 32.0})
 X = config.apply(accel_array)   # (T, F) or (T, F, C) with spectral_channels
 ```
 
+### Gap mode (opt-in)
+
+A frame the grid step could not fill -- no spectral window behind it, usually
+an accelerometer dropout -- holds `SPECTROGRAM_PADDING_VALUE` in every bin.
+Setting `gap_max_excluded_frame_fraction` marks a PSG epoch as the gap label
+(`PAD_CLASS_LABEL`, -2) once more than that fraction of its frames are
+excluded. It is off (`null`) by default, which leaves labels unchanged.
+
+```python
+config = ProcessingConfig.from_dict({
+    "type": "nufft", "window_step_seconds": 2,
+    "gap_max_excluded_frame_fraction": 0.5,
+})
+X = config.apply(accel_array, normalize=False)   # the sentinel must survive
+labels = config.mask_gap_epochs(labels, X)       # frame 0 starts epoch 0
+```
+
+The pieces are also available on their own: `pisces_lite.proc.frame_validity`
+and `pisces_lite.datasets.mask_labels_by_frame_coverage`.
+
 Split subjects and score folds:
 
 ```python

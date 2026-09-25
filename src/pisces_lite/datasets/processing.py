@@ -11,6 +11,7 @@ import pandas as pd
 
 from pisces_lite.datasets.constants import (
     MINIMUM_ACCEL_SAMPLES_PER_PSG,
+    PAD_CLASS_LABEL,
     PSG_COL,
     PSG_DT,
     PSG_MASK,
@@ -213,6 +214,39 @@ def mask_data(
         flagged = dilated
     psg_data.loc[flagged, psg_col] = mask_value
     return psg_data
+
+
+def mask_labels_by_frame_coverage(
+    labels: np.ndarray,
+    frame_valid: np.ndarray,
+    frames_per_epoch: int,
+    max_excluded_fraction: float = 0.5,
+    mask_value: int = PAD_CLASS_LABEL,
+) -> np.ndarray:
+    """Mark epochs whose spectrogram frames are mostly excluded as ``mask_value``.
+
+    :func:`mask_data` judges an epoch by its raw accelerometer sample count.
+    This judges it by the features a model actually sees: epoch ``i`` owns
+    frames ``[i * frames_per_epoch, (i + 1) * frames_per_epoch)`` of
+    ``frame_valid`` (see :func:`pisces_lite.proc.frame_validity`), and is
+    marked when more than ``max_excluded_fraction`` of them are excluded. A
+    frame past the end of ``frame_valid`` counts as excluded.
+
+    Returns a new array; ``labels`` is left unchanged.
+    """
+    if frames_per_epoch < 1:
+        raise ValueError("frames_per_epoch must be at least 1")
+    if not 0.0 <= max_excluded_fraction < 1.0:
+        raise ValueError("max_excluded_fraction must be in [0, 1)")
+    labels = np.array(labels, copy=True)
+    valid = np.asarray(frame_valid, dtype=bool)
+    n_epochs = labels.shape[0]
+    covered = np.zeros(n_epochs * frames_per_epoch, dtype=bool)
+    n = min(valid.size, covered.size)
+    covered[:n] = valid[:n]
+    excluded = 1.0 - covered.reshape(n_epochs, frames_per_epoch).mean(axis=1)
+    labels[excluded > max_excluded_fraction] = mask_value
+    return labels
 
 
 def calculate_binary_activity(

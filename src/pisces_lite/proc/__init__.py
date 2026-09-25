@@ -13,6 +13,7 @@ Touching any of the pipeline names without the extra raises below.
 """
 from pisces_lite.proc.config import ProcessingConfig
 from pisces_lite.proc.constants import SPECTROGRAM_PADDING_VALUE
+from pisces_lite.proc.frames import frame_validity
 
 _LAZY = frozenset(
     {
@@ -39,6 +40,7 @@ def __dir__():
 __all__ = [
     "ProcessingConfig",
     "SPECTROGRAM_PADDING_VALUE",
+    "frame_validity",
     "stacked_nufft_pipeline",
     "ComputeStackedSpectrogramsNUFFT",
     "RegulariseStackedNUFFTGrid",
