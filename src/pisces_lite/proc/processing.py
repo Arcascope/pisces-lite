@@ -131,6 +131,33 @@ class ComputeSpectrogramNUFFT(ProcessingStep):
         return [specs[0] for specs in grouped]
 
 
+def frame_grid(times: np.ndarray, hop: float) -> np.ndarray:
+    """The uniform frame grid a sparse spectrogram's window centres sit on.
+
+    senpy time-stamps each window at its centre, ``window / 2 + k * hop`` after
+    the first sample, so the centres share one offset within the hop. The grid
+    keeps that offset and spans ``[offset, times[-1]]``: every window lands
+    exactly on a frame, and a frame with no window is left for the caller to
+    fill. (A grid anchored at 0 instead puts every centre half a hop between
+    two frames when ``window / 2`` is an odd multiple of ``hop / 2``, so each
+    frame is decided by a tie -- the leading frames come out empty, one window
+    is used twice, and every frame is shifted by half a hop.)
+
+    For the usual 10 s windows every 2 s the grid is 1, 3, 5, ... s, so a 30 s
+    epoch owns the 15 frames centred inside it.
+    """
+    times = np.asarray(times, dtype=float)
+    hop = float(hop)
+    # Each centre's deviation from the first, wrapped into [-hop/2, hop/2), so a
+    # centre jittered just below a multiple of hop does not read as a whole hop.
+    deviation = np.mod(times - times[0] + hop / 2.0, hop) - hop / 2.0
+    offset = float(np.mod(times[0] + np.median(deviation), hop))
+    if hop - offset < 1e-9 * max(hop, 1.0):
+        offset = 0.0
+    n = int(np.floor((times[-1] - offset) / hop + 0.5)) + 1
+    return offset + hop * np.arange(max(n, 1))
+
+
 class RegulariseNUFFTGrid(ProcessingStep):
     """Sparse NUFFT spectrogram → dense uniform-time grid, sentinel-filling gaps."""
 
@@ -148,11 +175,10 @@ class RegulariseNUFFTGrid(ProcessingStep):
             return result
 
         n_freqs = Sxx.shape[1]
-        t_end = times[-1]
         hop = self.hop_seconds
         tol = hop / 2.0
 
-        expected_times = np.arange(0.0, t_end + tol, hop)
+        expected_times = frame_grid(times, hop)
         dense_Sxx = np.full(
             (len(expected_times), n_freqs),
             SPECTROGRAM_PADDING_VALUE,
@@ -726,11 +752,10 @@ class RegulariseStackedNUFFTGrid(ProcessingStep):
             return result
 
         T, F, C = Sxx.shape
-        t_end = times[-1]
         hop = self.hop_seconds
         tol = hop / 2.0
 
-        expected_times = np.arange(0.0, t_end + tol, hop)
+        expected_times = frame_grid(times, hop)
         dense_Sxx = np.full(
             (len(expected_times), F, C),
             SPECTROGRAM_PADDING_VALUE,
