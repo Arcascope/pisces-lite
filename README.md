@@ -74,3 +74,16 @@ reads `cv`, `metrics`, `model_io`, and `ProcessingConfig` — needs no extra.
 `pisces_lite.proc` resolves its pipeline classes lazily, so importing a
 `ProcessingConfig` does not import `senpy`; touching a pipeline class without
 the extra raises a clear error naming the extra to install.
+
+### JAX backend options
+
+`nufft_backend_kwargs` for the `jax` backend:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `packing` | `"senpy"` | `"senpy"` packs windows with senpy and runs batches one at a time. `"vectorized"` builds larger batches with vectorized NumPy and overlaps building with the GPU transform; same spectrograms, much higher throughput on a large GPU. |
+| `batch_size` | `128` | Windows per device call (`senpy` packing). |
+| `eps` | `1e-6` | NUFFT tolerance. |
+| `rows_per_call` | `8192` | Windows per device call (`vectorized` packing only). |
+| `max_in_flight` | `3` | Device calls queued at once (`vectorized` only). |
+| `build_threads` | `4` | Host threads building batches (`vectorized` only). |

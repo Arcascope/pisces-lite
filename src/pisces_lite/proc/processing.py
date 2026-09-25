@@ -397,6 +397,11 @@ def _compute_packed_jax_spectrograms(
     )[0]
 
 
+#: Options the JAX backend accepts in ``nufft_backend_kwargs``.
+_VECTORIZED_ONLY_OPTIONS = ("rows_per_call", "max_in_flight", "build_threads")
+_JAX_BACKEND_OPTIONS = ("batch_size", "eps", "packing") + _VECTORIZED_ONLY_OPTIONS
+
+
 def _compute_packed_jax_recording_spectrograms(
     *,
     recordings: Sequence[tuple[np.ndarray, Sequence[np.ndarray]]],
@@ -407,8 +412,35 @@ def _compute_packed_jax_recording_spectrograms(
     detrend: bool,
     backend_kwargs: Optional[dict],
 ) -> List[List["senpy.SpectrogramResult"]]:
-    """Pack channels and windows across recordings, then restore both orders."""
-    kwargs = _take_backend_kwargs("jax", backend_kwargs, ("batch_size", "eps"))
+    """Pack channels and windows across recordings, then restore both orders.
+
+    ``backend_kwargs["packing"]`` picks how windows reach the device:
+    ``"senpy"`` (the default) uses senpy's packer and runs batches one at a
+    time; ``"vectorized"`` (:mod:`pisces_lite.proc._packed_jax`) builds larger
+    batches with vectorized NumPy and overlaps building with the transform.
+    Both produce the same spectrograms.
+    """
+    kwargs = _take_backend_kwargs("jax", backend_kwargs, _JAX_BACKEND_OPTIONS)
+    packing = str(kwargs.pop("packing", "senpy"))
+    if packing == "vectorized":
+        from pisces_lite.proc._packed_jax import compute_packed_jax_recording_spectrograms
+
+        vectorized_kwargs = {k: kwargs[k] for k in ("eps", "rows_per_call") if k in kwargs}
+        return compute_packed_jax_recording_spectrograms(
+            recordings=recordings,
+            window_s=window_s,
+            overlap_s=overlap_s,
+            target_fs=target_fs,
+            kind=kind,
+            detrend=detrend,
+            backend_kwargs=vectorized_kwargs,
+            **{k: int(kwargs[k]) for k in ("max_in_flight", "build_threads") if k in kwargs},
+        )
+    if packing != "senpy":
+        raise ValueError(f"Unknown JAX packing {packing!r}; expected 'senpy' or 'vectorized'")
+    for option in _VECTORIZED_ONLY_OPTIONS:
+        if option in kwargs:
+            raise ValueError(f"JAX backend option {option!r} needs packing='vectorized'")
     batch_size = int(kwargs.pop("batch_size", 128))
     eps = float(kwargs.pop("eps", 1e-6))
 
