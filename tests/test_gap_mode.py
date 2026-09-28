@@ -131,7 +131,7 @@ def test_the_psg_origin_puts_each_epochs_frames_inside_it() -> None:
     psg_start = 1_000.0
     # The accelerometer starts 7 s into the first epoch and drops out for
     # the whole of epoch 4 (1120-1150 s).
-    t = np.arange(psg_start + 7.0, psg_start + 240.0, 1 / fs)
+    t = psg_start + 7.0 + np.arange(int(233.0 * fs)) / fs
     t = t[(t < psg_start + 120.0) | (t >= psg_start + 150.0)]
     rng = np.random.default_rng(0)
     accel = np.column_stack(
@@ -153,16 +153,17 @@ def test_the_psg_origin_puts_each_epochs_frames_inside_it() -> None:
     features = config.apply(accel, origin=psg_start)
     valid = frame_validity(features)
 
-    # Frame j is centred at 1 + 2 j s after the PSG start.
-    assert features.shape[0] == 2 + 115
-    # Windows need 4 samples; the first with any data is 0-10 s.
-    assert not valid[:2].any() and valid[2]
-    # Epoch 4's frames are 60..74, centred at 121..149 s. Windows centred there
-    # overlap the dropout; the ones centred at 121 and 123 s still reach back into
-    # epoch 3's data, and those at 147 and 149 s forward into epoch 5's.
-    assert not valid[62:73].any()
-    assert valid[58:62].all() and valid[73:77].all()
-    # Epoch 4 has 11 of 15 frames excluded. Epoch 0 misses only the two leading
-    # frames, and epoch 7 the three past the last window (centred at 233 s).
+    # Frame j is the window starting 2 j s after the PSG start. The last
+    # one to fit the data starts at 230 s.
+    assert features.shape[0] == 116
+    # The first windows start before the accelerometer but hold data: all FFTs.
+    assert valid[:4].all()
+    # The dropout is 120-150 s. Windows starting at 120..140 s (frames 60..70)
+    # lie inside it; the one starting at 118 s ends with 2 s of data before it,
+    # and the one at 142 s begins 2 s before the data comes back.
+    assert not valid[60:71].any()
+    assert valid[59] and valid[71]
+    # Epoch 4 (frames 60..74) has 11 of 15 frames without data. Epoch 7 (frames
+    # 105..119) has the 11 windows that end before the data does.
     labels = config.mask_gap_epochs(np.full(8, 2), features)
     assert labels.tolist() == [2, 2, 2, 2, PAD_CLASS_LABEL, 2, 2, 2]

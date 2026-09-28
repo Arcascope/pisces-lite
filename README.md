@@ -49,24 +49,21 @@ X = config.apply(accel_array, origin=psg_start)   # (T, F) or (T, F, C) with spe
 
 ### Frames and the window grid
 
-senpy puts spectral window `k` at `[origin + k·hop, origin + k·hop + window)`
-(`hop` is `window_step_seconds`) and reports every window, marking the ones
-with too few samples. Frame `j` of `X` is centred at
-`(window/2 mod hop) + j·hop` after the origin, so for 10 s windows every 2 s
-the frames are centred at 1, 3, 5, … s. Window `k` fills frame
-`k + floor((window/2)/hop)`, and the leading frames, centred before any window
-could be, hold padding. A frame with no window behind it — the leading
-frames, or a window with too little data, usually an accelerometer dropout —
-holds `SPECTROGRAM_PADDING_VALUE` in every bin and channel;
-`pisces_lite.proc.frame_validity(X)` finds them.
+Frame `j` of `X` is the FFT of the window `[origin + j·hop, origin + j·hop + window)`,
+where `hop` is `window_step_seconds`: 10 s windows every 2 s give frames for
+0–10 s, 2–12 s, 4–14 s, and so on. Every window with data (at least 4 samples) is
+an FFT. A window without data, usually an accelerometer dropout, holds
+`SPECTROGRAM_PADDING_VALUE` in every bin and channel;
+`pisces_lite.proc.frame_validity(X)` finds those frames. The last frame is the
+last window that ends within the data.
 
 `origin` is where window 0 starts, in the unit and on the clock of the
 accelerometer timestamp column:
 
 - **Offline, with PSG:** pass the PSG start, e.g. the first timestamp of the
-  PSG frame `pisces_lite.datasets.align_trim` returns. Frame `j` is then
-  centred inside epoch `j // frames_per_epoch`, whatever the accelerometer's
-  first sample was.
+  PSG frame `pisces_lite.datasets.align_trim` returns. Frame `j` then starts
+  inside epoch `j // frames_per_epoch`, whatever the accelerometer's first
+  sample was.
 - **Online, no PSG:** pass `origin="unix"`, or set `"grid_origin": "unix"` in
   the config, to start the grid at a whole number of hops since the Unix
   epoch, so every session shares one grid.
@@ -93,8 +90,8 @@ X = config.apply(accel_array, origin=psg_start)
 labels = config.mask_gap_epochs(labels, X)      # epoch 0 starts at psg_start
 ```
 
-The last epoch of a recording always misses the frames within half a window
-of its end, since no window is centred there; the 0.5 threshold tolerates that.
+When the data ends at the end of the last epoch, that epoch misses the frames
+whose windows would run past the end: 4 of 15 for 10 s windows every 2 s.
 The pieces are also available on their own: `pisces_lite.proc.frame_validity`
 and `pisces_lite.datasets.mask_labels_by_frame_coverage`.
 
@@ -134,7 +131,7 @@ The `jax` backend transforms every channel of every recording passed to
 
 | Option | Default | Meaning |
 |---|---|---|
-| `rows_per_call` | `8192` | Windows per device call. `batch_size` is its deprecated old name. |
+| `rows_per_call` | `8192` | Windows per device call. |
 | `max_in_flight` | `3` | Device calls queued before the host waits on the oldest. |
 | `build_threads` | `4` | Host threads building batches ahead of the device. |
 | `eps` | `1e-6` | NUFFT tolerance. |

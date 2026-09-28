@@ -1,11 +1,9 @@
-"""Where frames sit, and which window fills each.
+"""Frame ``j`` is window ``j``: the one starting ``j * hop`` after the origin.
 
-senpy (>= 4.1) reports every window on its grid, ``window / 2 + k * hop`` after
-the origin, with its index ``k`` and whether it had data. The regularise steps
-put window ``k`` in frame ``k + floor((window / 2) / hop)``, so frames are
-centred at ``(window / 2) mod hop + j * hop``: 1, 3, 5, ... s for 10 s windows
-every 2 s. Nothing is matched by nearest time, so no window is used twice and
-no frame is shifted.
+senpy (>= 4.1) reports every window on its grid with its index and whether it
+had data, and the regularise steps keep exactly that: every window with data
+is a frame, in order, and a window without data is a padding frame. Nothing is
+matched by nearest time, so no window is used twice and none is shifted.
 """
 from __future__ import annotations
 
@@ -23,35 +21,9 @@ from pisces_lite.proc import SPECTROGRAM_PADDING_VALUE, ProcessingConfig
 from pisces_lite.proc.processing import (
     RegulariseNUFFTGrid,
     RegulariseStackedNUFFTGrid,
-    frame_layout,
 )
 
 PAD = SPECTROGRAM_PADDING_VALUE
-
-
-def test_odd_second_centres_get_leading_empty_frames() -> None:
-    frames, times = frame_layout(np.array([5.0, 7.0, 9.0]), np.array([0, 1, 2]), 2.0)
-
-    np.testing.assert_array_equal(frames, [2, 3, 4])
-    np.testing.assert_allclose(times, [1, 3, 5, 7, 9])
-
-
-def test_even_centres_start_at_zero() -> None:
-    frames, times = frame_layout(np.array([16.0, 31.0]), np.array([0, 1]), 15.0)
-
-    np.testing.assert_array_equal(frames, [1, 2])
-    np.testing.assert_allclose(times, [1, 16, 31])
-
-    frames, times = frame_layout(np.array([4.0, 6.0]), np.array([0, 1]), 2.0)
-    np.testing.assert_array_equal(frames, [2, 3])
-    np.testing.assert_allclose(times, [0, 2, 4, 6])
-
-
-def test_a_centre_a_hair_below_a_whole_hop_counts_as_on_it() -> None:
-    frames, times = frame_layout(np.array([4.0 - 1e-12]), np.array([0]), 2.0)
-
-    np.testing.assert_array_equal(frames, [2])
-    assert abs(times[0]) < 1e-9
 
 
 def _stacked(window_index, valid) -> "senpy.StackedSpectrogramResult":
@@ -76,9 +48,9 @@ def test_every_window_lands_on_exactly_one_frame() -> None:
         _stacked([0, 1, 2, 3, 4], [True, True, True, False, True])
     )
 
-    np.testing.assert_allclose(result.times, [1, 3, 5, 7, 9, 11, 13])
-    np.testing.assert_allclose(result.Sxx[:, 0, 0], [PAD, PAD, 5, 7, 9, PAD, 13])
-    np.testing.assert_array_equal(result.valid, [False, False, True, True, True, False, True])
+    np.testing.assert_allclose(result.times, [5, 7, 9, 11, 13])
+    np.testing.assert_allclose(result.Sxx[:, 0, 0], [5, 7, 9, PAD, 13])
+    np.testing.assert_array_equal(result.valid, [True, True, True, False, True])
 
 
 def test_a_row_with_nan_in_one_channel_is_a_padding_frame() -> None:
@@ -87,8 +59,8 @@ def test_a_row_with_nan_in_one_channel_is_a_padding_frame() -> None:
 
     result = RegulariseStackedNUFFTGrid(hop_seconds=2.0).transform(stacked)
 
-    assert np.all(result.Sxx[3] == PAD)
-    assert result.valid.tolist() == [False, False, True, False]
+    assert np.all(result.Sxx[1] == PAD)
+    assert result.valid.tolist() == [True, False]
 
 
 def test_regularising_needs_window_indices() -> None:
@@ -127,13 +99,12 @@ def _config(backend: str, **kwargs) -> ProcessingConfig:
 @pytest.mark.parametrize("backend", ["cpu", "streaming"])
 def test_real_recordings_have_no_duplicated_or_shifted_frames(backend: str) -> None:
     X = _config(backend).apply(_accel(180.0), normalize=False)
-    excluded = np.all(X == PAD, axis=(1, 2))
 
-    # Only the frames centred before the first 10 s window (1 s and 3 s) are empty.
-    np.testing.assert_array_equal(np.flatnonzero(excluded), [0, 1])
-    assert not any(np.array_equal(X[i], X[i + 1]) for i in range(2, len(X) - 1))
-    # The last frame is the last window: 180 s of data, the last one spans 170-180 s.
-    assert len(X) == 2 + 86
+    # Every window has data, so every frame is a real FFT, starting with 0-10 s.
+    assert not np.any(np.all(X == PAD, axis=(1, 2)))
+    assert not any(np.array_equal(X[i], X[i + 1]) for i in range(len(X) - 1))
+    # 180 s of data: windows start every 2 s, the last spanning 170-180 s.
+    assert len(X) == 86
 
 
 def test_backends_put_the_same_windows_in_the_same_frames() -> None:
@@ -157,11 +128,11 @@ def test_origin_moves_the_grid_in_the_timestamp_unit() -> None:
     X = _config("cpu").apply(accel, normalize=False, origin=996_000.0)
     first_sample = _config("cpu").apply(accel, normalize=False)
 
-    # Windows 0 and 1 (996-1006 s, 998-1008 s) hold 6 s and 8 s of data. Window 2
-    # onwards is the grid anchored at the first sample, two frames later.
-    assert np.flatnonzero(np.all(X == PAD, axis=(1, 2))).tolist() == [0, 1]
+    # Windows 0 and 1 (996-1006 s, 998-1008 s) hold 6 s and 8 s of data, so they
+    # are FFTs too. Window 2 onwards is the grid anchored at the first sample.
+    assert not np.any(np.all(X == PAD, axis=(1, 2)))
     assert X.shape[0] == first_sample.shape[0] + 2
-    np.testing.assert_allclose(X[4:], first_sample[2:], rtol=0, atol=1e-9)
+    np.testing.assert_allclose(X[2:], first_sample, rtol=0, atol=1e-9)
 
 
 def test_unix_origin_anchors_to_whole_steps_since_the_epoch() -> None:

@@ -165,25 +165,10 @@ def test_jax_backend_matches_cpu(channels):
     np.testing.assert_allclose(got, want, atol=5e-3)
 
 
-def test_jax_batch_size_is_a_deprecated_rows_per_call(monkeypatch):
-    pytest.importorskip("jax", reason="needs the optional [jax] extra")
-    calls = _spy_on_compute_nustft_many(monkeypatch)
-    accel = _make_accel_array(n_seconds=8.0, fs=4.0)
-
-    with pytest.warns(DeprecationWarning, match="rows_per_call"):
-        _small_jax_config(nufft_backend_kwargs={"batch_size": 16}).apply(accel, normalize=False)
-    assert calls[0][1]["rows_per_call"] == 16
-
-    with pytest.raises(ValueError, match="not both"):
-        _small_jax_config(
-            nufft_backend_kwargs={"batch_size": 16, "rows_per_call": 16}
-        ).apply(accel, normalize=False)
-
-
 def test_jax_backend_refuses_unknown_options():
-    cfg = _small_jax_config(nufft_backend_kwargs={"packing": "vectorized"})
+    cfg = _small_jax_config(nufft_backend_kwargs={"batch_size": 128})
 
-    with pytest.raises(ValueError, match="packing"):
+    with pytest.raises(ValueError, match="batch_size"):
         cfg.apply(_make_accel_array(n_seconds=8.0, fs=4.0), normalize=False)
 
 

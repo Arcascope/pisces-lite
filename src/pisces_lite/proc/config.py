@@ -115,8 +115,8 @@ class ProcessingConfig:
         unchanged copy of ``labels``. Otherwise an epoch is marked as the gap
         label (``PAD_CLASS_LABEL``) when more than that fraction of its frames
         are excluded. ``features`` come from :meth:`apply`, normalized or not,
-        with ``origin`` at the start of epoch 0: frame ``j`` is then centred
-        inside epoch ``j // frames_per_epoch``.
+        with ``origin`` at the start of epoch 0: frame ``j``'s window then
+        starts inside epoch ``j // frames_per_epoch``.
         """
         labels = np.array(labels, copy=True)
         if self.gap_max_excluded_frame_fraction is None:

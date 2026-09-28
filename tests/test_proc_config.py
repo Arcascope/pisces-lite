@@ -43,13 +43,13 @@ def test_processing_config_accepts_backend_alias_and_kwargs():
         {
             "type": "nufft",
             "backend": "jax_packed",
-            "backend_kwargs": {"batch_size": 64, "eps": 1e-5},
+            "backend_kwargs": {"rows_per_call": 64, "eps": 1e-5},
         }
     )
     step = cfg._build_pipeline().substeps[1]
 
     assert step.nufft_backend == "jax"
-    assert step.nufft_backend_kwargs == {"batch_size": 64, "eps": 1e-5}
+    assert step.nufft_backend_kwargs == {"rows_per_call": 64, "eps": 1e-5}
 
 
 def test_processing_config_rejects_unknown_nufft_backend():

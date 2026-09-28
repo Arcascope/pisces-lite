@@ -171,66 +171,39 @@ class ComputeSpectrogramNUFFT(ProcessingStep):
         return [specs[0] for specs in grouped]
 
 
-def frame_layout(
-    times: np.ndarray, window_index: np.ndarray, hop: float
-) -> tuple[np.ndarray, np.ndarray]:
-    """Frame index of each window, and the time of every frame.
+def _regularise(result, hop: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """One frame per window on senpy's grid; windows without data hold the padding value.
 
-    senpy puts window ``k`` at its centre, ``window / 2 + k * hop`` after the
-    grid origin. Frames sit on the same hop, starting at the first frame time
-    at or after the origin that lies on those centres:
-    ``(window / 2) mod hop``. Window ``k`` is frame
-    ``k + floor((window / 2) / hop)``; the leading frames, centred before any
-    window could be, have no window. Frame ``j`` is therefore centred at
-    ``offset + j * hop``, and with the origin at a PSG epoch boundary the
-    frames centred inside epoch ``i`` are exactly
-    ``[i * frames_per_epoch, (i + 1) * frames_per_epoch)``.
-
-    For the usual 10 s windows every 2 s, frames are centred at 1, 3, 5, ... s
-    and window 0 (0-10 s, centred at 5 s) is frame 2.
-    """
-    times = np.asarray(times, dtype=np.float64)
-    window_index = np.asarray(window_index, dtype=np.int64)
-    if times.size == 0:
-        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float64)
-    hop = float(hop)
-    half_window = float(times[0] - window_index[0] * hop)
-    # A centre a hair below a whole hop still counts as on it.
-    lead = int(np.floor(half_window / hop + 1e-9))
-    frames = window_index + lead
-    offset = half_window - lead * hop
-    return frames, offset + hop * np.arange(int(frames[-1]) + 1, dtype=np.float64)
-
-
-def _regularise(
-    result, hop: float
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Lay a keep-mode result's rows onto frames; empty frames hold the padding value.
-
-    Returns ``(frame_times, dense_rows, frame_valid)``. A row fills its frame
-    only when senpy marked it valid and every value in it is finite.
+    Frame ``j`` is window ``j``: ``[origin + j * hop, origin + j * hop + window)``,
+    timestamped at its centre. A window fills its frame when senpy marked it
+    valid and every value in it is finite. Returns
+    ``(frame_times, dense_rows, frame_valid)``.
     """
     if result.window_index is None:
         raise ValueError(
             "regularising needs each row's window_index; compute the spectrogram "
             "with senpy >= 4.1 and empty_windows='keep'"
         )
-    frames, frame_times = frame_layout(result.times, result.window_index, hop)
+    window_index = np.asarray(result.window_index, dtype=np.int64)
     rows = result.Sxx
+    n_frames = int(window_index[-1]) + 1
+    hop = float(hop)
+    half_window = float(result.times[0]) - int(window_index[0]) * hop
+    frame_times = half_window + hop * np.arange(n_frames, dtype=np.float64)
     usable = np.asarray(result.valid, dtype=bool) & np.all(
         np.isfinite(rows.reshape(rows.shape[0], -1)), axis=1
     )
-    dense = np.full((frame_times.size,) + rows.shape[1:], SPECTROGRAM_PADDING_VALUE, dtype=rows.dtype)
-    dense[frames[usable]] = rows[usable]
-    frame_valid = np.zeros(frame_times.size, dtype=bool)
-    frame_valid[frames[usable]] = True
+    dense = np.full((n_frames,) + rows.shape[1:], SPECTROGRAM_PADDING_VALUE, dtype=rows.dtype)
+    dense[window_index[usable]] = rows[usable]
+    frame_valid = np.zeros(n_frames, dtype=bool)
+    frame_valid[window_index[usable]] = True
     return frame_times, dense, frame_valid
 
 
 class RegulariseNUFFTGrid(ProcessingStep):
     """NUFFT spectrogram on senpy's window grid → one row per frame, padding where empty.
 
-    See :func:`frame_layout` for where frames sit.
+    Frame ``j`` is window ``j`` of the grid; see :func:`_regularise`.
     """
 
     def __init__(self, hop_seconds: float):
@@ -531,9 +504,8 @@ def _compute_packed_jax_spectrograms(
 
 
 #: ``nufft_backend_kwargs`` the JAX backend accepts, passed to
-#: ``senpy.jax_backend.compute_nustft_many``. ``batch_size`` is the pre-4.1
-#: name for ``rows_per_call``.
-_JAX_BACKEND_OPTIONS = ("eps", "rows_per_call", "max_in_flight", "build_threads", "batch_size")
+#: ``senpy.jax_backend.compute_nustft_many``.
+_JAX_BACKEND_OPTIONS = ("eps", "rows_per_call", "max_in_flight", "build_threads")
 
 
 def _compute_packed_jax_recording_spectrograms(
@@ -552,16 +524,6 @@ def _compute_packed_jax_recording_spectrograms(
     Returns ``[recording][channel]`` spectrograms on senpy's window grid.
     """
     kwargs = _take_backend_kwargs("jax", backend_kwargs, _JAX_BACKEND_OPTIONS)
-    if "batch_size" in kwargs:
-        if "rows_per_call" in kwargs:
-            raise ValueError("pass rows_per_call or its old name batch_size, not both")
-        warnings.warn(
-            "the JAX backend option batch_size is now rows_per_call (windows per device "
-            "call, default 8192); batch_size will be removed in a future release",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        kwargs["rows_per_call"] = kwargs.pop("batch_size")
 
     from senpy import jax_backend as senpy_jax
 
@@ -813,7 +775,7 @@ def _stack_spectrogram_results(
 class RegulariseStackedNUFFTGrid(ProcessingStep):
     """Stacked spectrogram on senpy's window grid → one ``(F, C)`` slab per frame, padding where empty.
 
-    See :func:`frame_layout` for where frames sit.
+    Frame ``j`` is window ``j`` of the grid; see :func:`_regularise`.
     """
 
     def __init__(self, hop_seconds: float):
