@@ -153,9 +153,9 @@ def test_the_psg_origin_puts_each_epochs_frames_inside_it() -> None:
     features = config.apply(accel, origin=psg_start)
     valid = frame_validity(features)
 
-    # Frame j is the window starting 2 j s after the PSG start. The last
-    # one to fit the data starts at 230 s.
-    assert features.shape[0] == 116
+    # Frame j is the window starting 2 j s after the PSG start, through the
+    # one starting at 238 s, which holds the last 2 s of data.
+    assert features.shape[0] == 120
     # The first windows start before the accelerometer but hold data: all FFTs.
     assert valid[:4].all()
     # The dropout is 120-150 s. Windows starting at 120..140 s (frames 60..70)
@@ -163,7 +163,8 @@ def test_the_psg_origin_puts_each_epochs_frames_inside_it() -> None:
     # and the one at 142 s begins 2 s before the data comes back.
     assert not valid[60:71].any()
     assert valid[59] and valid[71]
-    # Epoch 4 (frames 60..74) has 11 of 15 frames without data. Epoch 7 (frames
-    # 105..119) has the 11 windows that end before the data does.
+    # Epoch 4 (frames 60..74) has 11 of 15 frames without data; every other
+    # epoch, the last included, has all 15.
+    assert valid[105:120].all()
     labels = config.mask_gap_epochs(np.full(8, 2), features)
     assert labels.tolist() == [2, 2, 2, 2, PAD_CLASS_LABEL, 2, 2, 2]

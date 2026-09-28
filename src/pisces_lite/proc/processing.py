@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 import math
 import time
-import warnings
 from typing import Dict, Generic, List, Optional, Sequence, TypeVar, Union
 
 import numpy as np
@@ -182,7 +181,7 @@ def _regularise(result, hop: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]
     if result.window_index is None:
         raise ValueError(
             "regularising needs each row's window_index; compute the spectrogram "
-            "with senpy >= 4.1 and empty_windows='keep'"
+            "with empty_windows='keep'"
         )
     window_index = np.asarray(result.window_index, dtype=np.int64)
     rows = result.Sxx

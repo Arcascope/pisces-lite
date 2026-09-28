@@ -55,7 +55,8 @@ where `hop` is `window_step_seconds`: 10 s windows every 2 s give frames for
 an FFT. A window without data, usually an accelerometer dropout, holds
 `SPECTROGRAM_PADDING_VALUE` in every bin and channel;
 `pisces_lite.proc.frame_validity(X)` finds those frames. The last frame is the
-last window that ends within the data.
+last window with data, so the windows the recording stops partway through are
+FFTs too.
 
 `origin` is where window 0 starts, in the unit and on the clock of the
 accelerometer timestamp column:
@@ -90,8 +91,6 @@ X = config.apply(accel_array, origin=psg_start)
 labels = config.mask_gap_epochs(labels, X)      # epoch 0 starts at psg_start
 ```
 
-When the data ends at the end of the last epoch, that epoch misses the frames
-whose windows would run past the end: 4 of 15 for 10 s windows every 2 s.
 The pieces are also available on their own: `pisces_lite.proc.frame_validity`
 and `pisces_lite.datasets.mask_labels_by_frame_coverage`.
 

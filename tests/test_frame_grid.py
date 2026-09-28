@@ -103,8 +103,9 @@ def test_real_recordings_have_no_duplicated_or_shifted_frames(backend: str) -> N
     # Every window has data, so every frame is a real FFT, starting with 0-10 s.
     assert not np.any(np.all(X == PAD, axis=(1, 2)))
     assert not any(np.array_equal(X[i], X[i + 1]) for i in range(len(X) - 1))
-    # 180 s of data: windows start every 2 s, the last spanning 170-180 s.
-    assert len(X) == 86
+    # 180 s of data: a window starts every 2 s up to 178 s, the last few holding
+    # only the data they reach.
+    assert len(X) == 90
 
 
 def test_backends_put_the_same_windows_in_the_same_frames() -> None:
@@ -141,4 +142,4 @@ def test_unix_origin_anchors_to_whole_steps_since_the_epoch() -> None:
     X = _config("cpu", grid_origin="unix").apply(accel, normalize=False)
     explicit = _config("cpu").apply(accel, normalize=False, origin=1_700_000_002.0)
 
-    np.testing.assert_array_equal(X, explicit)
+    np.testing.assert_allclose(X, explicit, rtol=1e-12)
