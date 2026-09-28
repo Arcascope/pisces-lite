@@ -18,8 +18,8 @@ def frame_validity(
     The grid-regularisation steps fill a frame with no window behind it with
     ``padding_value`` in every bin and channel, so a frame is excluded exactly
     when all of its values equal that sentinel. ``features`` is ``(T, ...)``,
-    and must be un-normalized: normalization rescales the sentinel along with
-    everything else, after which excluded frames can no longer be told apart.
+    before or after :meth:`ProcessingConfig.normalize`, which keeps those
+    frames holding the sentinel.
     """
     arr = np.asarray(features)
     if arr.ndim < 1:
