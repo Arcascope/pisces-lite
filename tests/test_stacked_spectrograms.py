@@ -155,7 +155,11 @@ def test_jax_backend_matches_cpu(channels):
         "spectral_channels": channels,
     }
     cpu = ProcessingConfig.from_dict({**common, "nufft_backend": "cpu"})
-    jax = ProcessingConfig.from_dict({**common, "nufft_backend": "jax"})
+    jax = ProcessingConfig.from_dict({
+        **common,
+        "nufft_backend": "jax",
+        "nufft_backend_kwargs": {"enable_x64": True},
+    })
 
     want = cpu.apply(accel, normalize=False)
     got = jax.apply_many([accel], normalize=False)[0]
