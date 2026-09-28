@@ -8,8 +8,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-import warnings
-from typing import Dict, Generic, List, Optional, Sequence, TypeVar
+from typing import Dict, Generic, List, Optional, Sequence, TypeVar, Union
 
 import numpy as np
 import senpy
@@ -32,7 +31,16 @@ _NUFFT_BACKEND_ALIASES = {
 }
 
 
+#: Where window 0 of the NUSTFT grid starts: ``None`` (the first sample), a
+#: number of seconds on the timestamps' clock, or ``"unix"`` (a whole number of
+#: hops since the Unix epoch). See ``senpy.window_grid``.
+OriginSpec = Union[None, float, str]
+
+
 class ProcessingStep(Generic[InputT, OutputT]):
+    #: Steps that place windows on the grid take ``origin_s`` in ``transform``.
+    takes_origin = False
+
     @property
     def name(self) -> str:
         return "ProcessingStep"
@@ -48,6 +56,29 @@ class ProcessingStep(Generic[InputT, OutputT]):
         return self.transform(X)
 
 
+def timestamp_unit(timestamps: np.ndarray) -> str:
+    """``"ms"`` or ``"s"``: the unit of a raw accelerometer timestamp column.
+
+    Inferred from the median sample spacing; no wearable samples slower than
+    one sample per 10 s, so a spacing of 10 or more must be milliseconds.
+    """
+    median_dt = float(np.median(np.diff(np.asarray(timestamps, dtype=np.float64))))
+    return "ms" if median_dt >= 10 else "s"
+
+
+def origin_seconds(timestamps: np.ndarray, origin: OriginSpec) -> OriginSpec:
+    """Convert an origin given on a raw timestamp column's clock to seconds.
+
+    ``origin`` is in the column's own unit (see :func:`timestamp_unit`), so a
+    PSG start read from the same data can be passed as it is. ``None`` and
+    ``"unix"`` pass through.
+    """
+    if origin is None or isinstance(origin, str):
+        return origin
+    scale = 1e-3 if timestamp_unit(timestamps) == "ms" else 1.0
+    return float(origin) * scale
+
+
 class ComputeJerkNUFFT(ProcessingStep):
     """Raw (N, 4) accel array → senpy.JerkData with non-uniform timestamps."""
 
@@ -60,8 +91,7 @@ class ComputeJerkNUFFT(ProcessingStep):
 
     def transform(self, X: np.ndarray) -> "senpy.JerkData":
         timestamps = np.ascontiguousarray(X[..., 0])
-        median_dt = float(np.median(np.diff(timestamps)))
-        ts_unit = "ms" if median_dt > 10 else "s"
+        ts_unit = timestamp_unit(timestamps)
         return senpy.compute_jerk(
             timestamps,
             np.ascontiguousarray(X[..., 1]),
@@ -101,7 +131,11 @@ class ComputeSpectrogramNUFFT(ProcessingStep):
             f"backend={self.nufft_backend})"
         )
 
-    def transform(self, jerk: "senpy.JerkData") -> "senpy.SpectrogramResult":
+    takes_origin = True
+
+    def transform(
+        self, jerk: "senpy.JerkData", origin_s: OriginSpec = None
+    ) -> "senpy.SpectrogramResult":
         return _compute_nufft_spectrogram(
             timestamps=jerk.timestamps_s,
             signal=jerk.jerk,
@@ -112,13 +146,17 @@ class ComputeSpectrogramNUFFT(ProcessingStep):
             detrend=self.detrend,
             backend=self.nufft_backend,
             backend_kwargs=self.nufft_backend_kwargs,
+            origin_s=origin_s,
         )
 
     def transform_many(
-        self, jerks: Sequence["senpy.JerkData"]
+        self,
+        jerks: Sequence["senpy.JerkData"],
+        origin_s: Union[OriginSpec, Sequence[OriginSpec]] = None,
     ) -> List["senpy.SpectrogramResult"]:
+        origins = _per_recording(origin_s, len(jerks))
         if self.nufft_backend != "jax":
-            return super().transform_many(jerks)
+            return [self.transform(jerk, origin) for jerk, origin in zip(jerks, origins)]
         grouped = _compute_packed_jax_recording_spectrograms(
             recordings=[(jerk.timestamps_s, [jerk.jerk]) for jerk in jerks],
             window_s=self.secperseg,
@@ -127,12 +165,45 @@ class ComputeSpectrogramNUFFT(ProcessingStep):
             kind=self.spectrogram_kind,
             detrend=self.detrend,
             backend_kwargs=self.nufft_backend_kwargs,
+            origins_s=origins,
         )
         return [specs[0] for specs in grouped]
 
 
+def _regularise(result, hop: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """One frame per window on senpy's grid; windows without data hold the padding value.
+
+    Frame ``j`` is window ``j``: ``[origin + j * hop, origin + j * hop + window)``,
+    timestamped at its centre. A window fills its frame when senpy marked it
+    valid and every value in it is finite. Returns
+    ``(frame_times, dense_rows, frame_valid)``.
+    """
+    if result.window_index is None:
+        raise ValueError(
+            "regularising needs each row's window_index; compute the spectrogram "
+            "with empty_windows='keep'"
+        )
+    window_index = np.asarray(result.window_index, dtype=np.int64)
+    rows = result.Sxx
+    n_frames = int(window_index[-1]) + 1
+    hop = float(hop)
+    half_window = float(result.times[0]) - int(window_index[0]) * hop
+    frame_times = half_window + hop * np.arange(n_frames, dtype=np.float64)
+    usable = np.asarray(result.valid, dtype=bool) & np.all(
+        np.isfinite(rows.reshape(rows.shape[0], -1)), axis=1
+    )
+    dense = np.full((n_frames,) + rows.shape[1:], SPECTROGRAM_PADDING_VALUE, dtype=rows.dtype)
+    dense[window_index[usable]] = rows[usable]
+    frame_valid = np.zeros(n_frames, dtype=bool)
+    frame_valid[window_index[usable]] = True
+    return frame_times, dense, frame_valid
+
+
 class RegulariseNUFFTGrid(ProcessingStep):
-    """Sparse NUFFT spectrogram → dense uniform-time grid, sentinel-filling gaps."""
+    """NUFFT spectrogram on senpy's window grid → one row per frame, padding where empty.
+
+    Frame ``j`` is window ``j`` of the grid; see :func:`_regularise`.
+    """
 
     def __init__(self, hop_seconds: float):
         self.hop_seconds = hop_seconds
@@ -142,33 +213,17 @@ class RegulariseNUFFTGrid(ProcessingStep):
         return "regularise_nufft_grid"
 
     def transform(self, result: "senpy.SpectrogramResult") -> "senpy.SpectrogramResult":
-        times = result.times
-        Sxx = result.Sxx
-        if len(times) == 0:
+        if len(result.times) == 0:
             return result
-
-        n_freqs = Sxx.shape[1]
-        t_end = times[-1]
-        hop = self.hop_seconds
-        tol = hop / 2.0
-
-        expected_times = np.arange(0.0, t_end + tol, hop)
-        dense_Sxx = np.full(
-            (len(expected_times), n_freqs),
-            SPECTROGRAM_PADDING_VALUE,
-            dtype=Sxx.dtype,
-        )
-        for i, t_exp in enumerate(expected_times):
-            dists = np.abs(times - t_exp)
-            j = int(np.argmin(dists))
-            if dists[j] <= tol:
-                dense_Sxx[i] = Sxx[j]
+        frame_times, dense_Sxx, frame_valid = _regularise(result, self.hop_seconds)
         return senpy.SpectrogramResult(
             frequencies=result.frequencies,
-            times=expected_times,
+            times=frame_times,
             Sxx=dense_Sxx,
             kind=result.kind,
             method=result.method,
+            valid=frame_valid,
+            origin_s=result.origin_s,
         )
 
 
@@ -197,13 +252,17 @@ class CompositeStep(ProcessingStep):
     def name(self) -> str:
         return "+".join(f"({s.name})" for s in self.substeps)
 
-    def transform(self, X):
+    def transform(self, X, origin_s: OriginSpec = None):
+        """Run every step; ``origin_s`` reaches the steps that place windows."""
         x_out = X
         for step in self.substeps:
             t0 = time.monotonic()
             try:
                 _log.info("step %s starting", step.name)
-                x_out = step.transform(x_out)
+                if step.takes_origin:
+                    x_out = step.transform(x_out, origin_s=origin_s)
+                else:
+                    x_out = step.transform(x_out)
             except BaseException:
                 _log.exception("step %s raised after %.2fs", step.name, time.monotonic() - t0)
                 raise
@@ -213,13 +272,22 @@ class CompositeStep(ProcessingStep):
             _log.info("step %s done in %.2fs → %s", step.name, time.monotonic() - t0, shape)
         return x_out
 
-    def transform_many(self, X: Sequence[InputT]) -> List[OutputT]:
+    def transform_many(
+        self,
+        X: Sequence[InputT],
+        origin_s: Union[OriginSpec, Sequence[OriginSpec]] = None,
+    ) -> List[OutputT]:
+        """Run every step over all recordings; ``origin_s`` is one origin or one per recording."""
         x_out = list(X)
+        origins = _per_recording(origin_s, len(x_out))
         for step in self.substeps:
             t0 = time.monotonic()
             try:
                 _log.info("step %s starting for %d recordings", step.name, len(x_out))
-                x_out = step.transform_many(x_out)
+                if step.takes_origin:
+                    x_out = step.transform_many(x_out, origin_s=origins)
+                else:
+                    x_out = step.transform_many(x_out)
             except BaseException:
                 _log.exception(
                     "step %s raised after %.2fs for %d recordings",
@@ -235,6 +303,18 @@ class CompositeStep(ProcessingStep):
                 len(x_out),
             )
         return x_out
+
+
+def _per_recording(
+    origin_s: Union[OriginSpec, Sequence[OriginSpec]], n: int
+) -> List[OriginSpec]:
+    """One origin per recording from a single origin or a sequence of them."""
+    if origin_s is None or isinstance(origin_s, (str, int, float, np.number)):
+        return [origin_s] * n
+    origins = list(origin_s)
+    if len(origins) != n:
+        raise ValueError(f"origin_s must be one origin or one per recording ({n}), got {len(origins)}")
+    return origins
 
 
 def _normalize_spectrogram_kind(kind: str) -> str:
@@ -264,6 +344,16 @@ def _senpy_kind(kind: str) -> str:
     return "psd" if kind == "log_psd" else kind
 
 
+def _grid_metadata(result) -> Dict[str, object]:
+    """The per-row window metadata a senpy result carries, to copy onto a derived one."""
+    return {
+        "window_index": result.window_index,
+        "sample_count": result.sample_count,
+        "valid": result.valid,
+        "origin_s": result.origin_s,
+    }
+
+
 def _log_psd_spectrogram(result: "senpy.SpectrogramResult") -> "senpy.SpectrogramResult":
     return senpy.SpectrogramResult(
         frequencies=result.frequencies,
@@ -271,6 +361,7 @@ def _log_psd_spectrogram(result: "senpy.SpectrogramResult") -> "senpy.Spectrogra
         Sxx=np.log(result.Sxx + _LOG_PSD_EPSILON),
         kind="log_psd",
         method=result.method,
+        **_grid_metadata(result),
     )
 
 
@@ -304,6 +395,12 @@ def _default_streaming_subwindow_s(window_s: float, overlap_s: float) -> float:
     return min(scale, math.gcd(window_us, hop_us)) / scale
 
 
+#: Every NUFFT call here asks senpy for the full window grid: windows with too
+#: few samples come back as NaN rows with ``valid`` False, and the regularise
+#: steps turn them into padding frames.
+_EMPTY_WINDOWS = "keep"
+
+
 def _compute_nufft_spectrogram(
     *,
     timestamps: np.ndarray,
@@ -315,6 +412,7 @@ def _compute_nufft_spectrogram(
     detrend: bool,
     backend: str,
     backend_kwargs: Optional[dict],
+    origin_s: OriginSpec = None,
 ) -> "senpy.SpectrogramResult":
     backend = _normalize_nufft_backend(backend)
     if backend == "cpu":
@@ -327,6 +425,8 @@ def _compute_nufft_spectrogram(
             target_fs=target_fs,
             kind=_senpy_kind(kind),
             detrend=detrend,
+            origin_s=origin_s,
+            empty_windows=_EMPTY_WINDOWS,
         )
         return _log_psd_spectrogram(result) if kind == "log_psd" else result
     if backend == "streaming":
@@ -347,6 +447,8 @@ def _compute_nufft_spectrogram(
             subwindow_s=subwindow_s,
             fmax=target_fs / 2.0 if target_fs is not None else None,
             detrend=detrend,
+            origin_s=origin_s,
+            empty_windows=_EMPTY_WINDOWS,
             **kwargs,
         )
         spectrogram = result.spectrogram(_senpy_kind(kind))
@@ -361,6 +463,7 @@ def _compute_nufft_spectrogram(
         kind=kind,
         detrend=detrend,
         backend_kwargs=backend_kwargs,
+        origin_s=origin_s,
     )[0]
 
 
@@ -384,8 +487,9 @@ def _compute_packed_jax_spectrograms(
     kind: str,
     detrend: bool,
     backend_kwargs: Optional[dict],
+    origin_s: OriginSpec = None,
 ) -> List["senpy.SpectrogramResult"]:
-    """Pack the channels of one recording and restore their time order."""
+    """Transform the channels of one recording on the JAX backend."""
     return _compute_packed_jax_recording_spectrograms(
         recordings=[(timestamps, signals)],
         window_s=window_s,
@@ -394,7 +498,13 @@ def _compute_packed_jax_spectrograms(
         kind=kind,
         detrend=detrend,
         backend_kwargs=backend_kwargs,
+        origins_s=[origin_s],
     )[0]
+
+
+#: ``nufft_backend_kwargs`` the JAX backend accepts, passed to
+#: ``senpy.jax_backend.compute_nustft_many``.
+_JAX_BACKEND_OPTIONS = ("eps", "rows_per_call", "max_in_flight", "build_threads")
 
 
 def _compute_packed_jax_recording_spectrograms(
@@ -406,105 +516,64 @@ def _compute_packed_jax_recording_spectrograms(
     kind: str,
     detrend: bool,
     backend_kwargs: Optional[dict],
+    origins_s: Optional[Sequence[OriginSpec]] = None,
 ) -> List[List["senpy.SpectrogramResult"]]:
-    """Pack channels and windows across recordings, then restore both orders."""
-    kwargs = _take_backend_kwargs("jax", backend_kwargs, ("batch_size", "eps"))
-    batch_size = int(kwargs.pop("batch_size", 128))
-    eps = float(kwargs.pop("eps", 1e-6))
+    """Transform every channel of every recording in one senpy ``compute_nustft_many`` call.
+
+    Returns ``[recording][channel]`` spectrograms on senpy's window grid.
+    """
+    kwargs = _take_backend_kwargs("jax", backend_kwargs, _JAX_BACKEND_OPTIONS)
 
     from senpy import jax_backend as senpy_jax
 
-    packed_recordings = []
-    group_metadata = []
-    for recording_index, (timestamps, signals) in enumerate(recordings):
-        signals = [np.asarray(signal) for signal in signals]
-        if not signals:
-            raise ValueError("each JAX recording requires at least one signal")
-        for channel_start in range(0, len(signals), 3):
-            group = signals[channel_start : channel_start + 3]
-            group_size = len(group)
-            group.extend(np.zeros_like(group[0]) for _ in range(3 - group_size))
-            packed_recordings.append((timestamps, np.column_stack(group)))
-            group_metadata.append((recording_index, channel_start, group_size))
+    recordings = list(recordings)
+    origins = _per_recording(origins_s, len(recordings))
+    for recording_index, (_, signals) in enumerate(recordings):
+        if len(signals) == 0:
+            raise ValueError(f"JAX recording {recording_index} has no signals")
 
-    batches = senpy_jax.pack_nustft_window_batches(
-        packed_recordings,
+    results = senpy_jax.compute_nustft_many(
+        [(timestamps, np.column_stack(signals)) for timestamps, signals in recordings],
         window_s=window_s,
         overlap_s=overlap_s,
-        batch_size=batch_size,
+        target_fs=target_fs,
+        detrend=detrend,
+        origin_s=origins,
+        empty_windows=_EMPTY_WINDOWS,
+        **kwargs,
     )
-    if not batches:
-        raise ValueError("JAX packed NUSTFT requires enough data for at least one window")
 
-    rows_by_group: List[Dict[int, tuple[float, np.ndarray]]] = [
-        {} for _ in packed_recordings
-    ]
-    frequencies_by_group: List[Optional[np.ndarray]] = [None] * len(packed_recordings)
-    for batch in batches:
-        coefficients = np.asarray(
-            senpy_jax.compute_nustft_window_batch(
-                batch.points,
-                batch.signals,
-                batch.valid,
-                nfft_padded=batch.nfft_padded,
-                median_fs=batch.median_fs,
-                detrend=detrend,
-                eps=eps,
-            )
-        )
-        batch_frequencies = np.arange(
-            batch.nfft_padded // 2 + 1, dtype=np.float64
-        ) / window_s
-        if target_fs is not None:
-            keep = batch_frequencies <= target_fs / 2.0 + np.finfo(float).eps
-            batch_frequencies = batch_frequencies[keep]
-            coefficients = coefficients[..., keep]
-        for row in np.flatnonzero(batch.row_valid):
-            group_index = int(batch.recording_indices[row])
-            window_index = int(batch.window_indices[row])
-            group_frequencies = frequencies_by_group[group_index]
-            if group_frequencies is None:
-                frequencies_by_group[group_index] = batch_frequencies
-            elif not np.array_equal(group_frequencies, batch_frequencies):
-                raise ValueError("JAX packed NUSTFT produced an incompatible frequency grid")
-            rows_by_group[group_index][window_index] = (
-                float(batch.times[row]),
-                coefficients[row],
-            )
-
-    results: List[List[Optional["senpy.SpectrogramResult"]]] = [
-        [None] * len(signals) for _, signals in recordings
-    ]
-    for group_index, (recording_index, channel_start, group_size) in enumerate(
-        group_metadata
-    ):
-        ordered = [rows_by_group[group_index][i] for i in sorted(rows_by_group[group_index])]
-        if not ordered:
+    spectrograms: List[List["senpy.SpectrogramResult"]] = []
+    for recording_index, channels in enumerate(results):
+        if len(channels[0].times) == 0:
             raise ValueError(
-                "JAX packed NUSTFT requires enough data for at least one window "
+                "JAX NUSTFT requires enough data for at least one window "
                 f"in recording {recording_index}"
             )
-        times = np.array([row[0] for row in ordered], dtype=np.float64)
-        group_coefficients = np.stack([row[1] for row in ordered])
-        for channel_index in range(group_size):
-            results[recording_index][channel_start + channel_index] = senpy.SpectrogramResult(
-                frequencies=frequencies_by_group[group_index],
-                times=times,
-                Sxx=_spectral_surface(group_coefficients[:, channel_index, :], kind),
-                kind=kind,
-                method="jax_finufft_packed",
-            )
-    if any(spec is None for recording in results for spec in recording):
-        raise RuntimeError("JAX packed NUSTFT did not reconstruct every signal")
-    return [[spec for spec in recording if spec is not None] for recording in results]
+        spectrograms.append(
+            [
+                senpy.SpectrogramResult(
+                    frequencies=channel.frequencies,
+                    times=channel.times,
+                    Sxx=_spectral_surface(channel.coefficients, kind),
+                    kind=kind,
+                    method="jax_finufft_packed",
+                    **_grid_metadata(channel),
+                )
+                for channel in channels
+            ]
+        )
+    return spectrograms
 
 
 class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
     """Raw ``(N, 4)`` accel → ``StackedSpectrogramResult`` ``(T, F, C)`` via per-channel NUFFT.
 
     Each requested channel (x, y, z, mag, jerk) is transformed independently with
-    the same NUFFT parameters, then stacked along the last axis.
+    the same NUFFT parameters and window grid, then stacked along the last axis.
     """
+
+    takes_origin = True
 
     def __init__(
         self,
@@ -537,7 +606,9 @@ class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
             f"backend={self.nufft_backend})"
         )
 
-    def transform(self, X: np.ndarray) -> "senpy.StackedSpectrogramResult":
+    def transform(
+        self, X: np.ndarray, origin_s: OriginSpec = None
+    ) -> "senpy.StackedSpectrogramResult":
         if self.nufft_backend == "cpu":
             _take_backend_kwargs("cpu", self.nufft_backend_kwargs, ())
             stacked = senpy.compute_stacked_spectrograms(
@@ -549,6 +620,8 @@ class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
                 detrend=self.detrend,
                 channels=self.channels,
                 use_diff=self.use_diff,
+                origin_s=origin_s,
+                empty_windows=_EMPTY_WINDOWS,
             )
             if self.spectrogram_kind == "log_psd":
                 stacked = senpy.StackedSpectrogramResult(
@@ -557,6 +630,7 @@ class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
                     Sxx=np.log(stacked.Sxx + _LOG_PSD_EPSILON),
                     channels=stacked.channels,
                     kind="log_psd",
+                    **_grid_metadata(stacked),
                 )
             return stacked
         timestamps, signals, channels = self._prepare_signals(X)
@@ -571,6 +645,7 @@ class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
                 kind=self.spectrogram_kind,
                 detrend=self.detrend,
                 backend_kwargs=self.nufft_backend_kwargs,
+                origin_s=origin_s,
             )
         else:
             specs = [
@@ -584,17 +659,16 @@ class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
                     detrend=self.detrend,
                     backend="streaming",
                     backend_kwargs=self.nufft_backend_kwargs,
+                    origin_s=origin_s,
                 )
                 for signal in signals
             ]
-        return _stack_spectrogram_results(specs, channels, self.secperseg - self.secoverlap)
+        return _stack_spectrogram_results(specs, channels)
 
     @staticmethod
     def _prepare_accelerometer(X: np.ndarray) -> "senpy.AccelerometerData":
         timestamps_raw = np.ascontiguousarray(X[..., 0], dtype=np.float64)
-        median_dt = float(np.median(np.diff(timestamps_raw)))
-        ts_unit = "ms" if median_dt >= 10 else "s"
-        conversion = 1e3 if ts_unit == "ms" else 1e6
+        conversion = 1e3 if timestamp_unit(timestamps_raw) == "ms" else 1e6
         timestamps_us = (timestamps_raw * conversion).astype(np.int64)
         return senpy.AccelerometerData(
             timestamps_us=timestamps_us,
@@ -635,10 +709,13 @@ class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
         return accel.timestamps_s, signals, channels
 
     def transform_many(
-        self, arrays: Sequence[np.ndarray]
+        self,
+        arrays: Sequence[np.ndarray],
+        origin_s: Union[OriginSpec, Sequence[OriginSpec]] = None,
     ) -> List["senpy.StackedSpectrogramResult"]:
+        origins = _per_recording(origin_s, len(arrays))
         if self.nufft_backend != "jax":
-            return super().transform_many(arrays)
+            return [self.transform(X, origin) for X, origin in zip(arrays, origins)]
         prepared = [self._prepare_signals(X) for X in arrays]
         grouped_specs = _compute_packed_jax_recording_spectrograms(
             recordings=[(timestamps, signals) for timestamps, signals, _ in prepared],
@@ -648,11 +725,10 @@ class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
             kind=self.spectrogram_kind,
             detrend=self.detrend,
             backend_kwargs=self.nufft_backend_kwargs,
+            origins_s=origins,
         )
         return [
-            _stack_spectrogram_results(
-                specs, channels, self.secperseg - self.secoverlap
-            )
+            _stack_spectrogram_results(specs, channels)
             for specs, (_, _, channels) in zip(grouped_specs, prepared, strict=True)
         ]
 
@@ -660,55 +736,46 @@ class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
 def _stack_spectrogram_results(
     specs: Sequence["senpy.SpectrogramResult"],
     channels: List[str],
-    hop_seconds: float,
 ) -> "senpy.StackedSpectrogramResult":
-    ref = specs[0]
+    """Stack per-channel spectrograms that share one window grid, row by window index.
+
+    Every channel is on the same grid (same timestamps, same origin), so a
+    window index names the same window in each. A grid row is valid only when
+    every channel has data there.
+    """
+    ref = max(specs, key=lambda spec: len(spec.window_index))
+    n_windows = len(ref.window_index)
     Sxx = np.full(
-        (len(ref.times), len(ref.frequencies), len(channels)),
+        (n_windows, len(ref.frequencies), len(channels)),
         np.nan,
         dtype=np.float64,
     )
-    unmatched = {}
+    valid = np.ones(n_windows, dtype=bool)
     for channel_index, (channel, spec) in enumerate(zip(channels, specs, strict=True)):
         if not np.array_equal(spec.frequencies, ref.frequencies):
             raise ValueError(f"NUFFT backend produced an incompatible grid for {channel!r}")
-        if np.array_equal(spec.times, ref.times):
-            Sxx[:, :, channel_index] = spec.Sxx
-            continue
-        indices = np.searchsorted(spec.times, ref.times)
-        left = np.clip(indices - 1, 0, len(spec.times) - 1)
-        right = np.clip(indices, 0, len(spec.times) - 1)
-        use_left = np.abs(spec.times[left] - ref.times) <= np.abs(
-            spec.times[right] - ref.times
-        )
-        best = np.where(use_left, left, right)
-        distances = np.abs(spec.times[best] - ref.times)
-        matched = distances <= hop_seconds / 2.0
-        Sxx[matched, :, channel_index] = spec.Sxx[best[matched]]
-        if not np.all(matched):
-            unmatched[channel] = int(np.count_nonzero(~matched))
-    if unmatched:
-        detail = ", ".join(
-            f"{channel}: {count}/{len(ref.times)} time bins"
-            for channel, count in unmatched.items()
-        )
-        warnings.warn(
-            "NUFFT backend produced NaN-filled time bins for channels that could not "
-            f"be aligned ({detail}).",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+        Sxx[spec.window_index, :, channel_index] = spec.Sxx
+        channel_valid = np.zeros(n_windows, dtype=bool)
+        channel_valid[spec.window_index] = spec.valid
+        valid &= channel_valid
     return senpy.StackedSpectrogramResult(
         frequencies=ref.frequencies,
         times=ref.times,
         Sxx=Sxx,
         channels=channels,
         kind=ref.kind,
+        window_index=ref.window_index,
+        sample_count=ref.sample_count,
+        valid=valid,
+        origin_s=ref.origin_s,
     )
 
 
 class RegulariseStackedNUFFTGrid(ProcessingStep):
-    """Snap a ``StackedSpectrogramResult`` to a uniform time grid, filling gaps with the padding value."""
+    """Stacked spectrogram on senpy's window grid → one ``(F, C)`` slab per frame, padding where empty.
+
+    Frame ``j`` is window ``j`` of the grid; see :func:`_regularise`.
+    """
 
     def __init__(self, hop_seconds: float):
         self.hop_seconds = hop_seconds
@@ -720,38 +787,17 @@ class RegulariseStackedNUFFTGrid(ProcessingStep):
     def transform(
         self, result: "senpy.StackedSpectrogramResult"
     ) -> "senpy.StackedSpectrogramResult":
-        times = result.times
-        Sxx = result.Sxx  # (T, F, C)
-        if len(times) == 0:
+        if len(result.times) == 0:
             return result
-
-        T, F, C = Sxx.shape
-        t_end = times[-1]
-        hop = self.hop_seconds
-        tol = hop / 2.0
-
-        expected_times = np.arange(0.0, t_end + tol, hop)
-        dense_Sxx = np.full(
-            (len(expected_times), F, C),
-            SPECTROGRAM_PADDING_VALUE,
-            dtype=Sxx.dtype,
-        )
-        idx_hi = np.searchsorted(times, expected_times)
-        idx_lo = np.clip(idx_hi - 1, 0, len(times) - 1)
-        idx_hi = np.clip(idx_hi, 0, len(times) - 1)
-        d_lo = np.abs(times[idx_lo] - expected_times)
-        d_hi = np.abs(times[idx_hi] - expected_times)
-        best_idx = np.where(d_lo <= d_hi, idx_lo, idx_hi)
-        best_dist = np.where(d_lo <= d_hi, d_lo, d_hi)
-        mask = best_dist <= tol
-        dense_Sxx[mask] = Sxx[best_idx[mask]]
-
+        frame_times, dense_Sxx, frame_valid = _regularise(result, self.hop_seconds)
         return senpy.StackedSpectrogramResult(
             frequencies=result.frequencies,
-            times=expected_times,
+            times=frame_times,
             Sxx=dense_Sxx,
             channels=result.channels,
             kind=result.kind,
+            valid=frame_valid,
+            origin_s=result.origin_s,
         )
 
 

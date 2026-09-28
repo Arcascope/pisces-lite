@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pisces-lite"
-version = "3.0.0"
+version = "4.0.0"
 description = "ML-backend-agnostic core supporting data set discovery, loading, common spectrogram/PSD-based processing, and CV scoring."
 readme = "README.md"
 license = "MIT"
@@ -45,11 +45,11 @@ dev = ["pytest"]
 # The distribution is named `arcascope-senpy`; its import name is `senpy`.
 # (There is an unrelated `senpy` project on PyPI, hence the prefixed name.)
 proc = [
-    "arcascope-senpy==4.0.3",
+    "arcascope-senpy==4.2.0",
 ]
 # proc on a JAX NUFFT backend. Superset of [proc]; arcascope-senpy[jax] covers it.
 jax = [
-    "arcascope-senpy[jax]==4.0.3",
+    "arcascope-senpy[jax]==4.2.0",
 ]
 
 [project.urls]
