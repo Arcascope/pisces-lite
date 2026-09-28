@@ -52,63 +52,60 @@ def test_stacked_spectrogram_cpu_backend_remains_available():
     assert result.shape[2] == 2
 
 
-def test_stacked_jax_backend_uses_senpy_packed_windows(monkeypatch):
+def _spy_on_compute_nustft_many(monkeypatch):
     from senpy import jax_backend as senpy_jax
 
     calls = []
+    original = senpy_jax.compute_nustft_many
 
-    def fake_window_batch(points, signals, valid, *, nfft_padded, median_fs, **kwargs):
-        calls.append((points.shape, signals.shape, valid.shape, kwargs))
-        shape = (points.shape[0], 3, nfft_padded // 2 + 1)
-        return np.ones(shape, dtype=np.complex64)
+    def spy(recordings, **kwargs):
+        recordings = list(recordings)
+        calls.append((len(recordings), kwargs))
+        return original(recordings, **kwargs)
 
-    monkeypatch.setattr(senpy_jax, "compute_nustft_window_batch", fake_window_batch)
+    monkeypatch.setattr(senpy_jax, "compute_nustft_many", spy)
+    return calls
+
+
+def test_stacked_jax_backend_uses_compute_nustft_many(monkeypatch):
+    pytest.importorskip("jax", reason="needs the optional [jax] extra")
+    calls = _spy_on_compute_nustft_many(monkeypatch)
     pipeline = stacked_nufft_pipeline(
         secperseg=2.0,
         secoverlap=1.0,
         target_fs=4.0,
         channels=["x", "mag"],
         nufft_backend="jax",
-        nufft_backend_kwargs={"batch_size": 8, "eps": 1e-5},
+        nufft_backend_kwargs={"rows_per_call": 8, "eps": 1e-5},
     )
 
     result = pipeline.transform(_make_accel_array(n_seconds=8.0, fs=4.0))
 
-    assert calls
+    assert len(calls) == 1
+    assert calls[0][1]["rows_per_call"] == 8 and calls[0][1]["empty_windows"] == "keep"
     assert result.ndim == 3
     assert result.shape[2] == 2
-    assert np.all(result[1:] == 1.0)
 
 
-def test_stacked_jax_apply_many_packs_windows_across_recordings(monkeypatch):
-    from senpy import jax_backend as senpy_jax
-
-    original_pack = senpy_jax.pack_nustft_window_batches
-    packed_recording_counts = []
-
-    def recording_pack(recordings, **kwargs):
-        packed_recording_counts.append(len(recordings))
-        return original_pack(recordings, **kwargs)
-
-    def fake_window_batch(points, signals, valid, *, nfft_padded, median_fs, **kwargs):
-        shape = (points.shape[0], 3, nfft_padded // 2 + 1)
-        return np.ones(shape, dtype=np.complex64)
-
-    monkeypatch.setattr(senpy_jax, "pack_nustft_window_batches", recording_pack)
-    monkeypatch.setattr(senpy_jax, "compute_nustft_window_batch", fake_window_batch)
-    cfg = ProcessingConfig.from_dict(
+def _small_jax_config(**extra) -> ProcessingConfig:
+    return ProcessingConfig.from_dict(
         {
             "type": "nufft",
             "fs": 4.0,
             "window_seconds": 2,
             "window_step_seconds": 1,
             "fmax": 2.0,
-            "spectral_channels": ["x", "mag"],
             "normalization_mode": "none",
             "nufft_backend": "jax",
-            "nufft_backend_kwargs": {"batch_size": 16},
+            **extra,
         }
     )
+
+
+def test_stacked_jax_apply_many_transforms_all_recordings_in_one_call(monkeypatch):
+    pytest.importorskip("jax", reason="needs the optional [jax] extra")
+    calls = _spy_on_compute_nustft_many(monkeypatch)
+    cfg = _small_jax_config(spectral_channels=["x", "mag"])
 
     results = cfg.apply_many(
         [
@@ -118,39 +115,15 @@ def test_stacked_jax_apply_many_packs_windows_across_recordings(monkeypatch):
         normalize=False,
     )
 
-    assert packed_recording_counts == [2]
+    assert [count for count, _ in calls] == [2]
     assert len(results) == 2
     assert all(result.ndim == 3 and result.shape[2] == 2 for result in results)
 
 
-def test_jerk_jax_apply_many_packs_windows_across_recordings(monkeypatch):
-    from senpy import jax_backend as senpy_jax
-
-    original_pack = senpy_jax.pack_nustft_window_batches
-    packed_recording_counts = []
-
-    def recording_pack(recordings, **kwargs):
-        packed_recording_counts.append(len(recordings))
-        return original_pack(recordings, **kwargs)
-
-    def fake_window_batch(points, signals, valid, *, nfft_padded, median_fs, **kwargs):
-        shape = (points.shape[0], 3, nfft_padded // 2 + 1)
-        return np.ones(shape, dtype=np.complex64)
-
-    monkeypatch.setattr(senpy_jax, "pack_nustft_window_batches", recording_pack)
-    monkeypatch.setattr(senpy_jax, "compute_nustft_window_batch", fake_window_batch)
-    cfg = ProcessingConfig.from_dict(
-        {
-            "type": "nufft",
-            "fs": 4.0,
-            "window_seconds": 2,
-            "window_step_seconds": 1,
-            "fmax": 2.0,
-            "normalization_mode": "none",
-            "nufft_backend": "jax",
-            "nufft_backend_kwargs": {"batch_size": 16},
-        }
-    )
+def test_jerk_jax_apply_many_transforms_all_recordings_in_one_call(monkeypatch):
+    pytest.importorskip("jax", reason="needs the optional [jax] extra")
+    calls = _spy_on_compute_nustft_many(monkeypatch)
+    cfg = _small_jax_config()
 
     results = cfg.apply_many(
         [
@@ -158,11 +131,60 @@ def test_jerk_jax_apply_many_packs_windows_across_recordings(monkeypatch):
             _make_accel_array(n_seconds=9.0, fs=4.0),
         ],
         normalize=False,
+        origins=[0.0, "unix"],
     )
 
-    assert packed_recording_counts == [2]
+    assert [count for count, _ in calls] == [2]
+    assert calls[0][1]["origin_s"] == [0.0, "unix"]
     assert len(results) == 2
     assert all(result.ndim == 2 for result in results)
+
+
+@pytest.mark.parametrize("channels", [None, ["x", "y", "z", "mag", "jerk"]])
+def test_jax_backend_matches_cpu(channels):
+    pytest.importorskip("jax", reason="needs the optional [jax] extra")
+    accel = _make_accel_array(n_seconds=300.0, fs=32.0)
+    accel = accel[(accel[:, 0] < 100.0) | (accel[:, 0] >= 140.0)]
+    common = {
+        "type": "nufft",
+        "fs": 16.0,
+        "window_seconds": 10,
+        "window_step_seconds": 2,
+        "normalization_mode": "none",
+        "spectrogram_kind": "log_psd",
+        "spectral_channels": channels,
+    }
+    cpu = ProcessingConfig.from_dict({**common, "nufft_backend": "cpu"})
+    jax = ProcessingConfig.from_dict({**common, "nufft_backend": "jax"})
+
+    want = cpu.apply(accel, normalize=False)
+    got = jax.apply_many([accel], normalize=False)[0]
+
+    assert got.shape == want.shape
+    np.testing.assert_array_equal(got == -1.0, want == -1.0)
+    np.testing.assert_allclose(got, want, atol=5e-3)
+
+
+def test_jax_batch_size_is_a_deprecated_rows_per_call(monkeypatch):
+    pytest.importorskip("jax", reason="needs the optional [jax] extra")
+    calls = _spy_on_compute_nustft_many(monkeypatch)
+    accel = _make_accel_array(n_seconds=8.0, fs=4.0)
+
+    with pytest.warns(DeprecationWarning, match="rows_per_call"):
+        _small_jax_config(nufft_backend_kwargs={"batch_size": 16}).apply(accel, normalize=False)
+    assert calls[0][1]["rows_per_call"] == 16
+
+    with pytest.raises(ValueError, match="not both"):
+        _small_jax_config(
+            nufft_backend_kwargs={"batch_size": 16, "rows_per_call": 16}
+        ).apply(accel, normalize=False)
+
+
+def test_jax_backend_refuses_unknown_options():
+    cfg = _small_jax_config(nufft_backend_kwargs={"packing": "vectorized"})
+
+    with pytest.raises(ValueError, match="packing"):
+        cfg.apply(_make_accel_array(n_seconds=8.0, fs=4.0), normalize=False)
 
 
 def test_processing_config_spectral_channels_produces_3d_output():

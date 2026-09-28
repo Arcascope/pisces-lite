@@ -5,9 +5,18 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
+
+from pisces_lite.proc.constants import SPECTROGRAM_PADDING_VALUE
+from pisces_lite.proc.frames import frame_validity
+
+#: ``origin`` for :meth:`ProcessingConfig.apply`: ``None``, a timestamp in the
+#: accelerometer column's own unit, or ``"unix"``.
+Origin = Union[None, float, str]
+
+GRID_ORIGINS = (None, "first_sample", "unix")
 
 
 @dataclass
@@ -32,6 +41,27 @@ class ProcessingConfig:
     spectral_channels: Optional[List[str]] = None
     nufft_backend: str = "streaming"
     nufft_backend_kwargs: Dict[str, object] = field(default_factory=dict)
+    # Where window 0 starts when apply() is given no origin: "first_sample"
+    # (None) anchors it at the first accelerometer sample; "unix" at a whole
+    # number of window steps since the Unix epoch, so online recordings share
+    # one grid. Offline, pass the PSG start as apply(origin=...) instead.
+    grid_origin: Optional[str] = None
+    # Opt-in gap mode: when set, :meth:`mask_gap_epochs` marks an epoch as gap
+    # once more than this fraction of its spectrogram frames are excluded.
+    # ``None`` (the default) leaves labels exactly as they were.
+    gap_max_excluded_frame_fraction: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        if self.grid_origin not in GRID_ORIGINS:
+            raise ValueError(
+                f"grid_origin must be null, 'first_sample' or 'unix', got {self.grid_origin!r}"
+            )
+        fraction = self.gap_max_excluded_frame_fraction
+        if fraction is not None and not 0.0 <= float(fraction) < 1.0:
+            raise ValueError(
+                "gap_max_excluded_frame_fraction must be in [0, 1) or null, "
+                f"got {fraction!r}"
+            )
 
     @classmethod
     def from_json(cls, path: "Path | str") -> "ProcessingConfig":
@@ -60,6 +90,45 @@ class ProcessingConfig:
     @property
     def hop_length(self) -> int:
         return int(self.fs * self.window_step_seconds)
+
+    def frames_per_epoch(self, psg_dt: float = 30.0) -> int:
+        """Spectrogram frames per PSG epoch of ``psg_dt`` seconds.
+
+        Accounts for ``time_downsample_rate``. Raises when the epoch is not a
+        whole number of frames, since frames could then not be assigned to
+        epochs without straddling a boundary.
+        """
+        frame_seconds = float(self.window_step_seconds) * int(self.time_downsample_rate)
+        ratio = float(psg_dt) / frame_seconds
+        if ratio < 1 or abs(ratio - round(ratio)) > 1e-9:
+            raise ValueError(
+                f"a {psg_dt} s epoch is not a whole number of {frame_seconds} s frames"
+            )
+        return int(round(ratio))
+
+    def mask_gap_epochs(
+        self, labels: np.ndarray, features: np.ndarray, psg_dt: float = 30.0
+    ) -> np.ndarray:
+        """Apply the opt-in gap mode to epoch ``labels`` for these ``features``.
+
+        With ``gap_max_excluded_frame_fraction`` unset this returns an
+        unchanged copy of ``labels``. Otherwise an epoch is marked as the gap
+        label (``PAD_CLASS_LABEL``) when more than that fraction of its frames
+        are excluded. ``features`` come from :meth:`apply`, normalized or not,
+        with ``origin`` at the start of epoch 0: frame ``j`` is then centred
+        inside epoch ``j // frames_per_epoch``.
+        """
+        labels = np.array(labels, copy=True)
+        if self.gap_max_excluded_frame_fraction is None:
+            return labels
+        from pisces_lite.datasets.processing import mask_labels_by_frame_coverage
+
+        return mask_labels_by_frame_coverage(
+            labels,
+            frame_validity(features),
+            self.frames_per_epoch(psg_dt),
+            max_excluded_fraction=float(self.gap_max_excluded_frame_fraction),
+        )
 
     def get_frequencies(self) -> np.ndarray:
         all_freq = np.fft.rfftfreq(n=self.nfft, d=1 / self.fs)
@@ -116,19 +185,40 @@ class ProcessingConfig:
             nufft_backend_kwargs=self.nufft_backend_kwargs,
         )
 
-    def extract_features(self, accel: np.ndarray) -> np.ndarray:
+    def _origin_s(self, accel: np.ndarray, origin: Origin):
+        """The pipeline's ``origin_s`` (seconds) for one recording."""
+        if origin is None:
+            return "unix" if self.grid_origin == "unix" else None
+        if isinstance(origin, str) and origin != "unix":
+            raise ValueError("origin must be None, a timestamp, or 'unix'")
+        from pisces_lite.proc._backend import load_processing
+
+        return load_processing("placing the window grid").origin_seconds(accel[..., 0], origin)
+
+    def extract_features(self, accel: np.ndarray, origin: Origin = None) -> np.ndarray:
+        """Features for one recording; ``origin`` is as for :meth:`apply`."""
         pipeline = self._build_pipeline()
-        features = pipeline.transform(accel)
+        features = pipeline.transform(accel, origin_s=self._origin_s(accel, origin))
         if features.ndim == 1:
             features = features[:, np.newaxis]
         return features
 
     def extract_features_many(
-        self, accel_arrays: Sequence[np.ndarray]
+        self,
+        accel_arrays: Sequence[np.ndarray],
+        origins: Optional[Sequence[Origin]] = None,
     ) -> List[np.ndarray]:
         """Extract several recordings, allowing accelerator backends to pack work."""
+        accel_arrays = list(accel_arrays)
+        if origins is None:
+            origins = [None] * len(accel_arrays)
+        elif len(origins) != len(accel_arrays):
+            raise ValueError("origins must match accel_arrays length")
         pipeline = self._build_pipeline()
-        features_many = pipeline.transform_many(list(accel_arrays))
+        features_many = pipeline.transform_many(
+            accel_arrays,
+            origin_s=[self._origin_s(a, o) for a, o in zip(accel_arrays, origins)],
+        )
         return [
             features[:, np.newaxis] if features.ndim == 1 else features
             for features in features_many
@@ -139,10 +229,21 @@ class ProcessingConfig:
         features: np.ndarray,
         data_set_name: Optional[str] = None,
     ) -> np.ndarray:
+        """Normalize ``features``; padding frames are left out and stay padding.
+
+        A frame the grid step could not fill (see :func:`frame_validity`)
+        holds ``SPECTROGRAM_PADDING_VALUE`` in every value. Those frames take
+        no part in any statistic and come back holding the padding value, so
+        :func:`frame_validity` and :meth:`mask_gap_epochs` work on normalized
+        features too. Remaining NaNs are set to 0 first.
+        """
+        valid = frame_validity(features)
         features = features.copy()
         features[np.isnan(features)] = 0.0
 
         if self.normalization_mode == "none":
+            return features
+        if not np.any(valid):
             return features
 
         if features.ndim == 3:
@@ -158,21 +259,29 @@ class ProcessingConfig:
                 denom = denom.reshape(1, 1, -1)
             else:
                 # Per-channel scalar self-stats: reduce over both T and F.
-                mean = np.mean(features, axis=(0, 1), keepdims=True)
-                denom = np.std(features, axis=(0, 1), keepdims=True)
-            return (features - mean) / (denom + 1e-7)
+                mean = np.mean(features[valid], axis=(0, 1), keepdims=True)
+                denom = np.std(features[valid], axis=(0, 1), keepdims=True)
+            return self._restore_padding((features - mean) / (denom + 1e-7), valid)
 
         if self.normalization_mode == "znorm_axis1":
-            norm_axis = 0 if features.shape[1] == 1 else 1
-            mean = np.mean(features, axis=norm_axis, keepdims=True)
-            denom = np.std(features, axis=norm_axis, keepdims=True)
-            return (features - mean) / (denom + 1e-7)
+            if features.shape[1] == 1:
+                mean = np.mean(features[valid], axis=0, keepdims=True)
+                denom = np.std(features[valid], axis=0, keepdims=True)
+            else:
+                mean = np.mean(features, axis=1, keepdims=True)
+                denom = np.std(features, axis=1, keepdims=True)
+            return self._restore_padding((features - mean) / (denom + 1e-7), valid)
 
         if data_set_name is not None:
             mean, denom = self._lookup_stats(data_set_name)
         else:
-            mean, denom = self._compute_stats(features)
-        return (features - mean) / (denom + 1e-7)
+            mean, denom = self._compute_stats(features[valid])
+        return self._restore_padding((features - mean) / (denom + 1e-7), valid)
+
+    @staticmethod
+    def _restore_padding(normalized: np.ndarray, valid: np.ndarray) -> np.ndarray:
+        normalized[~valid] = SPECTROGRAM_PADDING_VALUE
+        return normalized
 
     def _lookup_stats(self, data_set_name: str) -> Tuple[np.ndarray, np.ndarray]:
         """Load saved (mean, denom) for a dataset, tolerating the legacy ``std`` key."""
@@ -209,8 +318,19 @@ class ProcessingConfig:
         data_set_name: Optional[str] = None,
         normalize: bool = True,
         padding: bool = False,
+        origin: Origin = None,
     ) -> np.ndarray:
-        features = self.extract_features(accel_array)
+        """Turn one ``(N, 4)`` accelerometer array into features.
+
+        ``origin`` is where window 0 of the spectral grid starts, in the same
+        unit and on the same clock as the array's timestamp column: pass the
+        PSG start (e.g. from :func:`pisces_lite.datasets.align_trim`) so that
+        frames line up with epochs. ``"unix"`` anchors the grid to a whole
+        number of window steps since the Unix epoch, for online use with no
+        PSG. ``None`` falls back to :attr:`grid_origin`, and then to the first
+        sample. Samples before the origin are not used.
+        """
+        features = self.extract_features(accel_array, origin=origin)
         if normalize:
             features = self.normalize(features, data_set_name=data_set_name)
         if padding:
@@ -225,9 +345,11 @@ class ProcessingConfig:
         data_set_names: Optional[Sequence[Optional[str]]] = None,
         normalize: bool = True,
         padding: bool = False,
+        origins: Optional[Sequence[Origin]] = None,
     ) -> List[np.ndarray]:
         """Apply one config to several recordings without changing their order.
 
+        ``origins`` holds one :meth:`apply` ``origin`` per recording.
         Accelerator-backed pipeline steps may override ``transform_many`` to
         pack work across recordings. CPU-backed steps retain the established
         per-recording path.
@@ -244,7 +366,7 @@ class ProcessingConfig:
                 "padding=True was part of training; inference path does not pad."
             )
 
-        features_many = self.extract_features_many(accel_arrays)
+        features_many = self.extract_features_many(accel_arrays, origins=origins)
         if normalize:
             return [
                 self.normalize(features, data_set_name=data_set_name)
