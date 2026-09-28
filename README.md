@@ -134,3 +134,8 @@ The `jax` backend transforms every channel of every recording passed to
 | `max_in_flight` | `3` | Device calls queued before the host waits on the oldest. |
 | `build_threads` | `4` | Host threads building batches ahead of the device. |
 | `eps` | `1e-6` | NUFFT tolerance. |
+| `enable_x64` | `false` | Enable process-wide JAX float64 mode; recommended for closer CPU parity on macOS, but not supported by Metal. |
+
+For the standard macOS JAX CPU backend, use
+`"nufft_backend_kwargs": {"enable_x64": true}` when numerical agreement with
+the native double-precision backend matters more than float32 throughput.

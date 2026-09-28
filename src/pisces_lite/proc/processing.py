@@ -504,7 +504,13 @@ def _compute_packed_jax_spectrograms(
 
 #: ``nufft_backend_kwargs`` the JAX backend accepts, passed to
 #: ``senpy.jax_backend.compute_nustft_many``.
-_JAX_BACKEND_OPTIONS = ("eps", "rows_per_call", "max_in_flight", "build_threads")
+_JAX_BACKEND_OPTIONS = (
+    "eps",
+    "rows_per_call",
+    "max_in_flight",
+    "build_threads",
+    "enable_x64",
+)
 
 
 def _compute_packed_jax_recording_spectrograms(
