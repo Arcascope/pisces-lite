@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pisces-lite"
-version = "4.1.0"
+version = "4.1.1"
 description = "ML-backend-agnostic core supporting data set discovery, loading, common spectrogram/PSD-based processing, and CV scoring."
 readme = "README.md"
 license = "MIT"
