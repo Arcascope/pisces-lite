@@ -139,3 +139,14 @@ The `jax` backend transforms every channel of every recording passed to
 For the standard macOS JAX CPU backend, use
 `"nufft_backend_kwargs": {"enable_x64": true}` when numerical agreement with
 the native double-precision backend matters more than float32 throughput.
+
+### Jerk low-pass
+
+`"jerk_lowpass_hz": 6.0` low-pass filters x, y and z before the jerk is
+computed; the magnitude channel (|a|) is unchanged. The filter is a zero-phase
+2-s Hamming-window FIR at the recording's median sampling rate: within 0.03 dB
+of 0 dB up to 5 Hz, −6 dB at 6 Hz, and ≤ −51 dB from 7 Hz (16.7–100 Hz sampling).
+
+- `null` (the default): no filter; output is identical to earlier versions.
+- Sampling rate ≤ 2.2 × the cutoff (≤ 13.2 Hz for 6 Hz): the filter changes nothing.
+- The `cpu` NUFFT backend does not support it; use `streaming` or `jax`.
