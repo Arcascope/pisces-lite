@@ -93,7 +93,7 @@ def test_jerk_only_pipeline_runs_with_lowpass():
 
 
 def test_jax_backend_matches_streaming_with_lowpass():
-    pytest.importorskip("senpy.jax_backend")
+    pytest.importorskip("jax", reason="needs the optional [jax] extra")
     accel = _accel(50.0)
     streaming = _config(["mag", "jerk"], 6.0).apply(accel, normalize=False)
     jax = _config(["mag", "jerk"], 6.0, backend="jax").apply(accel, normalize=False)
