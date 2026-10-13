@@ -36,6 +36,10 @@ class ProcessingConfig:
     norm_stats: Optional[Dict[str, Dict[str, list]]] = field(default=None)
     make_plots: bool = True
     jerk_diff: bool = True
+    # Cutoff (Hz) of a low-pass applied to x, y and z before the jerk is
+    # computed (see ``processing.jerk_lowpass_taps``); |a| is unchanged.
+    # ``None`` (the default) leaves the jerk unfiltered.
+    jerk_lowpass_hz: Optional[float] = None
     detrend: bool = True
     spectrogram_kind: str = "magnitude"
     spectral_channels: Optional[List[str]] = None
@@ -167,6 +171,7 @@ class ProcessingConfig:
                 spectrogram_kind=self.spectrogram_kind,
                 nufft_backend=self.nufft_backend,
                 nufft_backend_kwargs=self.nufft_backend_kwargs,
+                jerk_lowpass_hz=self.jerk_lowpass_hz,
             )
 
         from pisces_lite.proc._backend import load_processing
@@ -183,6 +188,7 @@ class ProcessingConfig:
             spectrogram_kind=self.spectrogram_kind,
             nufft_backend=self.nufft_backend,
             nufft_backend_kwargs=self.nufft_backend_kwargs,
+            jerk_lowpass_hz=self.jerk_lowpass_hz,
         )
 
     def _origin_s(self, accel: np.ndarray, origin: Origin):

@@ -79,11 +79,52 @@ def origin_seconds(timestamps: np.ndarray, origin: OriginSpec) -> OriginSpec:
     return float(origin) * scale
 
 
+#: Length of the jerk low-pass filter, in seconds (an odd number of taps).
+JERK_LOWPASS_SECONDS = 2.0
+
+
+def jerk_lowpass_taps(fs: float, cutoff_hz: float) -> np.ndarray:
+    """Taps of the low-pass applied to x, y and z before the jerk.
+
+    A zero-phase Hamming-window FIR (``scipy.signal.firwin``) of
+    ``JERK_LOWPASS_SECONDS`` at the median sampling rate ``fs``, −6 dB at
+    ``cutoff_hz``. When ``fs / 2 ≤ 1.1 · cutoff_hz`` there is almost nothing
+    above the cutoff to remove, and the taps are a unit impulse.
+    """
+    if fs / 2 <= 1.1 * cutoff_hz:
+        return np.ones(1)
+    from scipy.signal import firwin
+
+    n = 2 * int(round(fs * JERK_LOWPASS_SECONDS / 2)) + 1
+    return firwin(n, cutoff_hz, fs=fs)
+
+
+def lowpass_axes(
+    timestamps_s: np.ndarray, axes: Sequence[np.ndarray], cutoff_hz: Optional[float]
+) -> List[np.ndarray]:
+    """Each axis convolved with ``jerk_lowpass_taps`` at the recording's median rate.
+
+    The filter runs over the sample sequence, so it treats samples as evenly
+    spaced at the median rate. Each end is padded with its edge value.
+    ``cutoff_hz=None`` returns the axes unchanged.
+    """
+    if cutoff_hz is None:
+        return list(axes)
+    fs = 1.0 / float(np.median(np.diff(np.asarray(timestamps_s, dtype=np.float64))))
+    taps = jerk_lowpass_taps(fs, float(cutoff_hz))
+    half = len(taps) // 2
+    return [
+        np.convolve(np.pad(np.asarray(a, dtype=np.float64), half, mode="edge"), taps, mode="valid")
+        for a in axes
+    ]
+
+
 class ComputeJerkNUFFT(ProcessingStep):
     """Raw (N, 4) accel array → senpy.JerkData with non-uniform timestamps."""
 
-    def __init__(self, use_diff: bool = True):
+    def __init__(self, use_diff: bool = True, lowpass_hz: Optional[float] = None):
         self.use_diff = use_diff
+        self.lowpass_hz = lowpass_hz
 
     @property
     def name(self) -> str:
@@ -92,11 +133,15 @@ class ComputeJerkNUFFT(ProcessingStep):
     def transform(self, X: np.ndarray) -> "senpy.JerkData":
         timestamps = np.ascontiguousarray(X[..., 0])
         ts_unit = timestamp_unit(timestamps)
+        scale = 1e-3 if ts_unit == "ms" else 1.0
+        x, y, z = lowpass_axes(
+            timestamps * scale, [X[..., 1], X[..., 2], X[..., 3]], self.lowpass_hz
+        )
         return senpy.compute_jerk(
             timestamps,
-            np.ascontiguousarray(X[..., 1]),
-            np.ascontiguousarray(X[..., 2]),
-            np.ascontiguousarray(X[..., 3]),
+            np.ascontiguousarray(x),
+            np.ascontiguousarray(y),
+            np.ascontiguousarray(z),
             ts_unit=ts_unit,
             use_diff=self.use_diff,
         )
@@ -592,6 +637,7 @@ class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
         use_diff: bool = True,
         nufft_backend: str = "streaming",
         nufft_backend_kwargs: Optional[dict] = None,
+        jerk_lowpass_hz: Optional[float] = None,
     ):
         self.secperseg = secperseg
         self.secoverlap = secoverlap
@@ -602,6 +648,12 @@ class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
         self.use_diff = use_diff
         self.nufft_backend = _normalize_nufft_backend(nufft_backend)
         self.nufft_backend_kwargs = dict(nufft_backend_kwargs or {})
+        self.jerk_lowpass_hz = jerk_lowpass_hz
+        if jerk_lowpass_hz is not None and self.nufft_backend == "cpu":
+            raise ValueError(
+                "jerk_lowpass_hz needs the 'streaming' or 'jax' NUFFT backend; "
+                "the 'cpu' backend computes the jerk inside senpy"
+            )
 
     @property
     def name(self) -> str:
@@ -696,11 +748,14 @@ class ComputeStackedSpectrogramsNUFFT(ProcessingStep):
             "mag": senpy.compute_magnitude(accel.x, accel.y, accel.z),
         }
         if "jerk" in channels:
+            x, y, z = lowpass_axes(
+                accel.timestamps_s, [accel.x, accel.y, accel.z], self.jerk_lowpass_hz
+            )
             jerk = senpy.compute_jerk(
                 accel.timestamps_s,
-                accel.x,
-                accel.y,
-                accel.z,
+                np.ascontiguousarray(x),
+                np.ascontiguousarray(y),
+                np.ascontiguousarray(z),
                 use_diff=self.use_diff,
             )
             signal_by_channel["jerk"] = jerk.jerk
@@ -847,6 +902,7 @@ def stacked_nufft_pipeline(
     spectrogram_kind: str = "magnitude",
     nufft_backend: str = "streaming",
     nufft_backend_kwargs: Optional[dict] = None,
+    jerk_lowpass_hz: Optional[float] = None,
 ) -> CompositeStep:
     """Build: raw ``(N, 4)`` → stacked spectrograms → regularise → ``(T, F, C)`` array."""
     feature_kwargs = feature_kwargs or {}
@@ -862,6 +918,7 @@ def stacked_nufft_pipeline(
                 use_diff=use_diff,
                 nufft_backend=nufft_backend,
                 nufft_backend_kwargs=nufft_backend_kwargs,
+                jerk_lowpass_hz=jerk_lowpass_hz,
             ),
             RegulariseStackedNUFFTGrid(hop_seconds=secperseg - secoverlap),
             ExtractStackedArray(
@@ -884,12 +941,13 @@ def nufft_based_features(
     spectrogram_kind: str = "magnitude",
     nufft_backend: str = "streaming",
     nufft_backend_kwargs: Optional[dict] = None,
+    jerk_lowpass_hz: Optional[float] = None,
 ) -> CompositeStep:
     """Build: raw (N, 4) → JerkNUFFT → NUFFTSpectrogram → regularise → GetFeatures."""
     feature_kwargs = feature_kwargs or {}
     return CompositeStep(
         substeps=[
-            ComputeJerkNUFFT(use_diff=use_diff),
+            ComputeJerkNUFFT(use_diff=use_diff, lowpass_hz=jerk_lowpass_hz),
             ComputeSpectrogramNUFFT(
                 secperseg=secperseg,
                 secoverlap=secoverlap,
